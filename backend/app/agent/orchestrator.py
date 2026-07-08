@@ -107,8 +107,18 @@ class ChatOrchestrator:
         )
 
     async def _persist_failed(
-        self, conversation_id: str, run_id: str, parts: list[str], code: str, started: float
+        self,
+        conversation_id: str,
+        run_id: str,
+        parts: list[str],
+        code: str,
+        started: float,
+        *,
+        trace_id: str,
+        model: str | None = None,
     ) -> None:
+        # Traceability must survive the failure path — that's the path you most
+        # want to correlate. Stamp the same trace metadata as a completed turn.
         failed = Message(
             id=ids.message_id(),
             role="assistant",
@@ -116,6 +126,9 @@ class ChatOrchestrator:
             status="failed",
             latency_ms=int((time.perf_counter() - started) * 1000),
             error_code=code,
+            prompt_version=self._prompt_version,
+            model=model,
+            trace_id=trace_id,
             created_at=_now(),
         )
         await self._repo.fail_turn(conversation_id, run_id, failed)
@@ -137,6 +150,10 @@ class ChatOrchestrator:
 
         started = time.perf_counter()
         last_heartbeat = started
+        trace_id = ids.prefixed_id("trace")
+        # Each tool round is its own model call, so fallback is per round; this
+        # holds the LAST round's model — the one that produced the final answer.
+        model_used: str | None = None
         parts: list[str] = []
         usage_in = 0
         usage_out = 0
@@ -166,10 +183,13 @@ class ChatOrchestrator:
                         yield StreamMessage("response.delta", {"text": event.text})
                     elif isinstance(event, ToolCall):
                         round_tool_calls.append(event)
-                    elif isinstance(event, Completed) and event.usage is not None:
-                        usage_in += event.usage.input_tokens
-                        usage_out += event.usage.output_tokens
-                        usage_seen = True
+                    elif isinstance(event, Completed):
+                        if event.usage is not None:
+                            usage_in += event.usage.input_tokens
+                            usage_out += event.usage.output_tokens
+                            usage_seen = True
+                        if event.model is not None:
+                            model_used = event.model
 
                 if not round_tool_calls or self._tool_registry is None:
                     break
@@ -207,17 +227,35 @@ class ChatOrchestrator:
                 suggested_action_ids=suggested_action_ids,
                 usage=Usage(input_tokens=usage_in, output_tokens=usage_out) if usage_seen else None,
                 latency_ms=latency_ms,
+                prompt_version=self._prompt_version,
+                model=model_used,
+                trace_id=trace_id,
                 created_at=_now(),
             )
             stored = await self._repo.complete_turn(conversation.id, run_id, assistant)
             finalized = True
             if stored is None:
+                # The lock/run was lost before the answer could be stored (write
+                # race). Surface it as a failure AND log it — otherwise this path
+                # is invisible (finalized=True skips the finally's abandoned log).
+                logger.warning(
+                    "chat.turn.not_stored",
+                    extra={"context": {"conversation_id": conversation.id, "trace_id": trace_id}},
+                )
                 yield self._failed_event(ErrorCode.INTERNAL_ERROR.value)
             else:
                 logger.info(
                     "chat.turn.completed",
                     extra={
-                        "context": {"conversation_id": conversation.id, "latency_ms": latency_ms}
+                        "context": {
+                            "conversation_id": conversation.id,
+                            "trace_id": trace_id,
+                            "model": model_used,
+                            "prompt_version": self._prompt_version,
+                            "input_tokens": usage_in,
+                            "output_tokens": usage_out,
+                            "latency_ms": latency_ms,
+                        }
                     },
                 )
                 yield StreamMessage(
@@ -229,33 +267,57 @@ class ChatOrchestrator:
                 )
         except AdapterError as exc:
             finalized = True
-            await self._persist_failed(conversation.id, run_id, parts, exc.code.value, started)
+            await self._persist_failed(
+                conversation.id,
+                run_id,
+                parts,
+                exc.code.value,
+                started,
+                trace_id=trace_id,
+                model=model_used,
+            )
             logger.info(
                 "chat.turn.failed",
                 extra={
-                    "context": {"conversation_id": conversation.id, "error_code": exc.code.value}
+                    "context": {
+                        "conversation_id": conversation.id,
+                        "trace_id": trace_id,
+                        "error_code": exc.code.value,
+                    }
                 },
             )
             yield self._failed_event(exc.code.value)
         except Exception:
             finalized = True
             await self._persist_failed(
-                conversation.id, run_id, parts, ErrorCode.INTERNAL_ERROR.value, started
+                conversation.id,
+                run_id,
+                parts,
+                ErrorCode.INTERNAL_ERROR.value,
+                started,
+                trace_id=trace_id,
+                model=model_used,
             )
             logger.error(
                 "chat.turn.error",
                 exc_info=True,
-                extra={"context": {"conversation_id": conversation.id}},
+                extra={"context": {"conversation_id": conversation.id, "trace_id": trace_id}},
             )
             yield self._failed_event(ErrorCode.INTERNAL_ERROR.value)
         finally:
             if not finalized:
                 await self._persist_failed(
-                    conversation.id, run_id, parts, ErrorCode.INTERNAL_ERROR.value, started
+                    conversation.id,
+                    run_id,
+                    parts,
+                    ErrorCode.INTERNAL_ERROR.value,
+                    started,
+                    trace_id=trace_id,
+                    model=model_used,
                 )
                 logger.info(
                     "chat.turn.abandoned",
-                    extra={"context": {"conversation_id": conversation.id}},
+                    extra={"context": {"conversation_id": conversation.id, "trace_id": trace_id}},
                 )
 
     async def stream_replay(

@@ -53,6 +53,22 @@ async def test_dashboard_counts(client: httpx.AsyncClient) -> None:
     assert body["requests"]["by_type"].get("strategy_call", 0) >= 1
 
 
+async def test_conversation_detail_shows_trace_metadata(
+    client: httpx.AsyncClient, fake_adapter: FakeAdapter
+) -> None:
+    fake_adapter.set_rounds(
+        [[TextDelta(text="Hello there"), Completed(usage=None, model="fake-model")]]
+    )
+    cid, token = await _create(client)
+    await _send_sse(client, cid, token, "hi", "cmid_trace")
+
+    resp = await client.get(f"/api/v1/admin/conversations/{cid}", auth=ADMIN_AUTH)
+    assistant = [m for m in resp.json()["messages"] if m["role"] == "assistant"][-1]
+    assert assistant["prompt_version"] == "sys-v1"
+    assert assistant["model"] == "fake-model"
+    assert assistant["trace_id"].startswith("trace_")
+
+
 async def test_conversation_detail_masks_email(client: httpx.AsyncClient) -> None:
     cid, token = await _create(client)
     await _send_sse(client, cid, token, "Reach me at ada@acme.com please", "cmid_1")

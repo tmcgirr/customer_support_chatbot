@@ -27,6 +27,9 @@ class Usage(BaseModel):
 
 
 class Message(BaseModel):
+    # protected_namespaces=() so the trace field named `model` is allowed.
+    model_config = ConfigDict(protected_namespaces=())
+
     id: str
     role: MessageRole
     content: str
@@ -38,6 +41,11 @@ class Message(BaseModel):
     usage: Usage | None = None
     latency_ms: int | None = None
     error_code: str | None = None
+    # Trace metadata (assistant messages): which prompt/model answered, plus a
+    # per-turn id for log correlation. `model` reflects the fallback if it was used.
+    prompt_version: str | None = None
+    model: str | None = None
+    trace_id: str | None = None
     created_at: datetime
 
 

@@ -50,9 +50,15 @@ class Settings(BaseSettings):
     # --- Model provider ---
     openai_api_key: SecretStr = SecretStr("")
     openai_model: str = "gpt-5.4-mini"
+    # Approved fallback model, tried once if the primary is MODEL_UNAVAILABLE before
+    # any output streams. Empty = no fallback (opt-in per environment).
+    openai_fallback_model: str = ""
 
     # --- Knowledge retrieval (set OPENAI_VECTOR_STORE_ID after upload_knowledge.py) ---
     openai_vector_store_id: str = ""
+    # Drop retrieval hits scoring below this before grounding (0.0 = keep all).
+    # Tune per environment against the store's score distribution.
+    retrieval_min_score: float = 0.0
 
     # --- Client portal (get_portal_information tool; URL is a placeholder for POC) ---
     portal_url: str = "https://portal.cadre.ai"

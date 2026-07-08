@@ -32,12 +32,16 @@ class _FakeStream:
     def __init__(self, events: list[Any], stream_raise: Exception | None) -> None:
         self._events = events
         self._raise = stream_raise
+        self.closed = False
 
     async def __aiter__(self) -> Any:
         for event in self._events:
             yield event
         if self._raise is not None:
             raise self._raise
+
+    async def close(self) -> None:
+        self.closed = True
 
 
 class _FakeResponses:
@@ -48,12 +52,14 @@ class _FakeResponses:
         self._create_raise = create_raise
         self._stream_raise = stream_raise
         self.last_request: dict[str, Any] | None = None
+        self.last_stream: _FakeStream | None = None
 
     async def create(self, **kwargs: Any) -> _FakeStream:
         self.last_request = kwargs
         if self._create_raise is not None:
             raise self._create_raise
-        return _FakeStream(self._events, self._stream_raise)
+        self.last_stream = _FakeStream(self._events, self._stream_raise)
+        return self.last_stream
 
 
 class _FakeClient:
@@ -194,3 +200,152 @@ async def test_tool_call_input_items_serialize_for_round_two() -> None:
         "call_id": "call_1",
         "output": '{"matched": true}',
     }
+
+
+# --- Model fallback ----------------------------------------------------------
+
+
+class _PerModelResponses:
+    """create() behaves per model. Behavior tuple: (events, create_raise[, stream_raise])."""
+
+    def __init__(self, behaviors: dict[str, tuple[Any, ...]]) -> None:
+        self._behaviors = behaviors
+        self.models_called: list[str] = []
+
+    async def create(self, **kwargs: Any) -> _FakeStream:
+        model = kwargs["model"]
+        self.models_called.append(model)
+        behavior = self._behaviors[model]
+        events, create_raise = behavior[0], behavior[1]
+        stream_raise = behavior[2] if len(behavior) > 2 else None
+        if create_raise is not None:
+            raise create_raise
+        return _FakeStream(events, stream_raise)
+
+
+class _PerModelClient:
+    def __init__(self, behaviors: dict[str, tuple[Any, ...]]) -> None:
+        self.responses = _PerModelResponses(behaviors)
+
+    async def close(self) -> None:
+        pass
+
+
+async def test_falls_back_to_fallback_model_on_early_failure() -> None:
+    client = _PerModelClient(
+        {
+            "primary": ([], OpenAIError("down")),  # create fails before any output
+            "backup": (
+                [
+                    ev(type="response.output_text.delta", delta="hi from backup"),
+                    ev(type="response.completed", response=ev(usage=None)),
+                ],
+                None,
+            ),
+        }
+    )
+    adapter = OpenAIResponsesAdapter(client=client, model="primary", fallback_model="backup")  # type: ignore[arg-type]
+    events = [
+        e
+        async for e in adapter.send(
+            instructions="s", messages=[ModelMessage(role="user", content="x")]
+        )
+    ]
+    texts = "".join(e.text for e in events if isinstance(e, TextDelta))
+    completed = [e for e in events if isinstance(e, Completed)]
+    assert texts == "hi from backup"
+    assert completed[-1].model == "backup"  # the answer reports the fallback model
+    assert client.responses.models_called == ["primary", "backup"]
+
+
+async def test_no_fallback_configured_raises_and_does_not_retry() -> None:
+    client = _PerModelClient({"primary": ([], OpenAIError("down"))})
+    adapter = OpenAIResponsesAdapter(client=client, model="primary", fallback_model="")  # type: ignore[arg-type]
+    with pytest.raises(AdapterError):
+        [e async for e in adapter.send(instructions="s", messages=[])]
+    assert client.responses.models_called == ["primary"]  # no fallback attempted
+
+
+async def test_midstream_failure_is_not_retried_on_fallback() -> None:
+    # primary yields a delta then ends without a terminal event (AdapterError):
+    # output already started, so the fallback must NOT be tried (no dup output).
+    client = _PerModelClient(
+        {
+            "primary": ([ev(type="response.output_text.delta", delta="partial")], None),
+            "backup": ([ev(type="response.completed", response=ev(usage=None))], None),
+        }
+    )
+    adapter = OpenAIResponsesAdapter(client=client, model="primary", fallback_model="backup")  # type: ignore[arg-type]
+    collected: list[StreamEvent] = []
+    with pytest.raises(AdapterError):
+        async for e in adapter.send(instructions="s", messages=[]):
+            collected.append(e)
+    assert "".join(e.text for e in collected if isinstance(e, TextDelta)) == "partial"
+    assert "backup" not in client.responses.models_called
+
+
+async def test_completed_reports_primary_model_when_no_fallback_needed() -> None:
+    client = _FakeClient(
+        [
+            ev(type="response.output_text.delta", delta="ok"),
+            ev(type="response.completed", response=ev(usage=None)),
+        ]
+    )
+    adapter = OpenAIResponsesAdapter(client=client, model="primary-m", fallback_model="backup")  # type: ignore[arg-type]
+    events = await _collect(adapter)
+    completed = [e for e in events if isinstance(e, Completed)]
+    assert completed[-1].model == "primary-m"
+
+
+async def test_midstream_openai_error_with_fallback_is_not_retried() -> None:
+    # The realistic mid-stream failure: a delta streams, THEN the provider drops
+    # with an OpenAIError. Output already started -> the fallback must NOT run.
+    client = _PerModelClient(
+        {
+            "primary": (
+                [ev(type="response.output_text.delta", delta="partial")],
+                None,
+                OpenAIError("dropped"),
+            ),
+            "backup": ([ev(type="response.completed", response=ev(usage=None))], None, None),
+        }
+    )
+    adapter = OpenAIResponsesAdapter(client=client, model="primary", fallback_model="backup")  # type: ignore[arg-type]
+    collected: list[StreamEvent] = []
+    with pytest.raises(AdapterError):
+        async for e in adapter.send(instructions="s", messages=[]):
+            collected.append(e)
+    assert "".join(e.text for e in collected if isinstance(e, TextDelta)) == "partial"
+    assert "backup" not in client.responses.models_called
+
+
+async def test_non_model_adapter_error_is_not_retried_on_fallback() -> None:
+    # Fallback is only for MODEL_UNAVAILABLE; a different code must propagate as-is.
+    from app.core.errors import ErrorCode
+
+    class _RetrievalFail:
+        def __init__(self) -> None:
+            self.models_called: list[str] = []
+
+        async def create(self, **kwargs: Any) -> _FakeStream:
+            self.models_called.append(kwargs["model"])
+            raise AdapterError(ErrorCode.RETRIEVAL_UNAVAILABLE)
+
+    responses = _RetrievalFail()
+    client = SimpleNamespace(responses=responses)
+    adapter = OpenAIResponsesAdapter(client=client, model="primary", fallback_model="backup")  # type: ignore[arg-type]
+    with pytest.raises(AdapterError):
+        [e async for e in adapter.send(instructions="s", messages=[])]
+    assert responses.models_called == ["primary"]  # no fallback for a non-model error
+
+
+async def test_stream_is_closed_after_run() -> None:
+    client = _FakeClient(
+        [
+            ev(type="response.output_text.delta", delta="ok"),
+            ev(type="response.completed", response=ev(usage=None)),
+        ]
+    )
+    await _collect(_adapter(client))
+    assert client.responses.last_stream is not None
+    assert client.responses.last_stream.closed is True

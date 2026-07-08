@@ -29,6 +29,9 @@ request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
 _EVENT_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 
 # Keys that must never appear in a log record — they can carry user content/PII.
+# Matching is EXACT (not prefix/substring), so safe adjacent keys like
+# `prompt_version`, `input_tokens`, `trace_id` are permitted by design. Keep this
+# exact-match contract if hardening the guard, or those legitimate keys will break.
 FORBIDDEN_CONTEXT_KEYS: frozenset[str] = frozenset(
     {"content", "message", "text", "email", "phone", "body", "token", "prompt", "query"}
 )

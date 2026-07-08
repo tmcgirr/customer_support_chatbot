@@ -171,3 +171,37 @@ async def test_no_categories_sends_no_filter() -> None:
     await _search(client).search("q")
     assert client.vector_stores.last_kwargs is not None
     assert "filters" not in client.vector_stores.last_kwargs
+
+
+def _search_scored(client: _FakeClient, min_score: float) -> KnowledgeSearch:
+    return KnowledgeSearch(client=client, vector_store_id="vs_test", min_score=min_score)  # type: ignore[arg-type]
+
+
+async def test_low_relevance_hits_are_filtered_before_grounding() -> None:
+    client = _FakeClient(
+        hits=[
+            _hit(attributes={"source_id": "kbs_hi"}, score=0.8),
+            _hit(attributes={"source_id": "kbs_lo"}, score=0.2),
+        ]
+    )
+    result = await _search_scored(client, 0.5).search("q")
+    assert result.status == "ok"
+    assert [h.source_id for h in result.results] == ["kbs_hi"]  # the 0.2 hit dropped
+
+
+async def test_all_hits_below_threshold_returns_empty() -> None:
+    client = _FakeClient(hits=[_hit(score=0.1), _hit(score=0.2)])
+    result = await _search_scored(client, 0.5).search("q")
+    assert result.status == "empty"
+    assert result.results == []
+
+
+async def test_min_score_zero_keeps_all_hits() -> None:
+    client = _FakeClient(
+        hits=[
+            _hit(attributes={"source_id": "a"}, score=0.1),
+            _hit(attributes={"source_id": "b"}, score=0.9),
+        ]
+    )
+    result = await _search_scored(client, 0.0).search("q")
+    assert len(result.results) == 2

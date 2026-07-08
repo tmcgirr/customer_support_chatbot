@@ -228,3 +228,39 @@ Choices made during implementation that the planning docs did not fully specify
   booking/scheduling intent whose `allowed_action_ids` includes `strategy_call`, and route
   "book/connect/schedule a call" to it in the prompt so the reply always carries the action chip.
   Broader than the earlier `dsc_001` note (any booking intent, not just discovery).
+
+## Phase V0 — foundation & staging environment (V1 build)
+
+- **2026-07-08 · `ENV` defaults to `prod`; non-dev fails closed on incomplete config.** `staging`/
+  `prod` refuse to boot without real `SESSION_SECRET`/`ADMIN_PASSWORD`/`OPENAI_API_KEY`/
+  `OPENAI_VECTOR_STORE_ID`, a non-localhost `MONGO_URI`, and https non-localhost `CORS_ORIGINS`.
+  CORS + Mongo are validated by parsed host (reject `*`, http, localhost/127.0.0.1/::1), and
+  secrets are stripped so whitespace-only values are caught (Phase V0 review, HIGH: CORS
+  exact-string fail-open).
+- **2026-07-08 · `/healthz` is a minimal public probe; env/build/flags live behind admin.**
+  `GET /api/v1/admin/system` (admin auth) exposes env/build/feature-flags so an unauthenticated
+  caller can't fingerprint the deployment. The dev stream-test router mounts only in dev.
+- **2026-07-08 · Staging = one DO Droplet (Demo team) + docker-compose + Caddy** (`flush_interval -1`
+  keeps SSE unbuffered). Verified live: env=staging + token-by-token streaming over HTTPS. Runbook
+  `docs/DEPLOY_STAGING.md`; a dedicated staging OpenAI project is a deferred refinement (staging
+  currently reuses the dev key/store).
+
+## Phase V1 — agent controls & retrieval hardening
+
+- **2026-07-08 · Model fallback is transparent and only-before-first-output.** The adapter tries the
+  primary model; on `MODEL_UNAVAILABLE` *before any delta streams*, it retries once on
+  `OPENAI_FALLBACK_MODEL`. A **mid-stream** failure is NOT retried — replaying would duplicate
+  output. Fallback is opt-in (empty = none). The `Completed` event reports the model that actually
+  answered, so the fallback is observable.
+- **2026-07-08 · Per-message trace metadata.** Each assistant message records `prompt_version`,
+  `model` (the fallback if used), and a per-turn `trace_id`; the turn-completed log carries the same
+  plus token counts + latency (no PII/content). Surfaced in the admin conversation detail. (The
+  conversation-level `model` is set at create; the per-message `model` is authoritative for the turn.)
+- **2026-07-08 · Retrieval relevance threshold.** `RETRIEVAL_MIN_SCORE` drops hits below the score
+  before grounding (0.0 = keep all; tuned per env against the store's distribution). All hits below
+  threshold → `empty`, not `unavailable`. Category metadata filters already existed.
+- **2026-07-08 · Vector Store promotion = per-env stores, not shared.** `upload_knowledge.py` runs
+  against an env's OpenAI project (via `get_settings()` key) and mints a store id set in that env's
+  `OPENAI_VECTOR_STORE_ID`. Promotion = re-upload approved content to the prod project's store; never
+  edit prod content in place. The golden gate (CI `golden-eval` job, its `OPENAI_VECTOR_STORE_ID`
+  secret pointed at the target store) must pass on the target config before promotion.

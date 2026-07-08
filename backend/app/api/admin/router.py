@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from app.api.admin.auth import AdminDep
 from app.api.deps import RepoDep, RequestRepoDep
@@ -51,10 +51,15 @@ class ConversationListResponse(BaseModel):
 
 
 class AdminMessage(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
     id: str
     role: str
     content: str
     status: str
+    prompt_version: str | None = None
+    model: str | None = None
+    trace_id: str | None = None
     created_at: datetime
 
 
@@ -167,6 +172,9 @@ async def conversation_detail(
                 role=m.role,
                 content=mask_pii_in_text(m.content),
                 status=m.status,
+                prompt_version=m.prompt_version,
+                model=m.model,
+                trace_id=m.trace_id,
                 created_at=m.created_at,
             )
             for m in conversation.messages

@@ -18,6 +18,9 @@ from openai import AsyncOpenAI, OpenAIError
 
 from app.core.config import get_settings
 from app.core.errors import ErrorCode
+from app.core.logging import get_logger
+
+logger = get_logger("app.adapter")
 
 # --- Normalized boundary types ------------------------------------------------
 
@@ -78,6 +81,7 @@ class ToolCall:
 @dataclass(frozen=True)
 class Completed:
     usage: Usage | None = None
+    model: str | None = None  # the model that actually produced the answer (may be the fallback)
 
 
 StreamEvent = TextDelta | ToolCall | Completed
@@ -141,10 +145,18 @@ def _usage(response: Any) -> Usage | None:
 
 
 class OpenAIResponsesAdapter:
-    def __init__(self, client: AsyncOpenAI | None = None, model: str | None = None) -> None:
+    def __init__(
+        self,
+        client: AsyncOpenAI | None = None,
+        model: str | None = None,
+        fallback_model: str | None = None,
+    ) -> None:
         settings = get_settings()
         self._client = client or AsyncOpenAI(api_key=settings.openai_api_key.get_secret_value())
         self._model = model or settings.openai_model
+        self._fallback_model = (
+            fallback_model if fallback_model is not None else settings.openai_fallback_model
+        )
 
     async def send(
         self,
@@ -153,8 +165,34 @@ class OpenAIResponsesAdapter:
         messages: list[InputItem],
         tools: list[ToolSpec] | None = None,
     ) -> AsyncIterator[StreamEvent]:
+        """Stream the primary model; if it fails BEFORE any output streams and a
+        fallback is configured, retry once on the fallback. A mid-stream failure
+        (after deltas were yielded) is NOT retried — it would duplicate output."""
+        started = False
+        try:
+            async for event in self._stream(self._model, instructions, messages, tools):
+                started = True
+                yield event
+            return
+        except AdapterError as exc:
+            # Only retry a MODEL_UNAVAILABLE that failed before any output streamed
+            # (retrying mid-stream would duplicate output; retrying a non-model
+            # error would just fail again on the fallback).
+            if started or exc.code != ErrorCode.MODEL_UNAVAILABLE or not self._fallback_model:
+                raise
+            logger.info("model.fallback", extra={"context": {"model": self._fallback_model}})
+        async for event in self._stream(self._fallback_model, instructions, messages, tools):
+            yield event
+
+    async def _stream(
+        self,
+        model: str,
+        instructions: str,
+        messages: list[InputItem],
+        tools: list[ToolSpec] | None,
+    ) -> AsyncIterator[StreamEvent]:
         request: dict[str, Any] = {
-            "model": self._model,
+            "model": model,
             "instructions": instructions,
             "input": [_to_input_item(m) for m in messages],
             "stream": True,
@@ -180,6 +218,10 @@ class OpenAIResponsesAdapter:
 
         try:
             stream: Any = await self._client.responses.create(**request)
+        except OpenAIError:
+            raise AdapterError() from None
+
+        try:
             async for raw in stream:
                 event: Any = raw
                 etype = getattr(event, "type", "")
@@ -197,13 +239,19 @@ class OpenAIResponsesAdapter:
                     )
                 elif etype == "response.completed":
                     saw_completed = True
-                    yield Completed(usage=_usage(event.response))
+                    yield Completed(usage=_usage(event.response), model=model)
                 elif etype in ("response.failed", "response.incomplete", "error"):
                     raise AdapterError()
         # Catch the base type so no provider-typed exception ever escapes (#4);
         # `from None` so the provider message isn't chained onto the AdapterError.
         except OpenAIError:
             raise AdapterError() from None
+        finally:
+            # Release the HTTP stream deterministically on completion, error, or an
+            # early consumer stop (client disconnect → GeneratorExit at a yield).
+            closer = getattr(stream, "close", None)
+            if closer is not None:
+                await closer()
 
         # A stream that ends without a terminal event (clean mid-stream EOF /
         # upstream truncation) is a failure, not a finished answer.

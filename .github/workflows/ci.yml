@@ -32,8 +32,9 @@ jobs:
       # Exercise the golden-eval harness end-to-end without the real model.
       - run: uv run python -m eval.run --fake
 
-  # The real golden-set gate. Manual-dispatch (spends API budget); requires the
-  # OPENAI_API_KEY (+ optional OPENAI_VECTOR_STORE_ID) repo secrets.
+  # The real golden-set gate (deployment gate). Manual-dispatch (spends API budget).
+  # Point OPENAI_API_KEY + OPENAI_VECTOR_STORE_ID at the TARGET environment's OpenAI
+  # project/store (e.g. staging) so it gates promotion against that exact config.
   golden-eval:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest

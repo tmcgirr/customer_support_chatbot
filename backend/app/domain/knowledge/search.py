@@ -77,15 +77,18 @@ def _to_hit(item: Any) -> SearchHit:
 
 class KnowledgeSearch:
     def __init__(
-        self, client: AsyncOpenAI | None = None, vector_store_id: str | None = None
+        self,
+        client: AsyncOpenAI | None = None,
+        vector_store_id: str | None = None,
+        min_score: float | None = None,
     ) -> None:
-        self._client = client or AsyncOpenAI(
-            api_key=get_settings().openai_api_key.get_secret_value()
-        )
+        settings = get_settings()
+        self._client = client or AsyncOpenAI(api_key=settings.openai_api_key.get_secret_value())
         self._vector_store_id: str = (
-            vector_store_id
-            if vector_store_id is not None
-            else get_settings().openai_vector_store_id
+            vector_store_id if vector_store_id is not None else settings.openai_vector_store_id
+        )
+        self._min_score: float = (
+            min_score if min_score is not None else settings.retrieval_min_score
         )
 
     async def search(
@@ -123,6 +126,23 @@ class KnowledgeSearch:
             return SearchResult("unavailable", [])
 
         hits = hits[:capped]
+        # Drop low-relevance hits before grounding (a threshold of 0 keeps all).
+        if self._min_score > 0:
+            retrieved = len(hits)
+            hits = [hit for hit in hits if hit.score >= self._min_score]
+            if len(hits) < retrieved:
+                # Content-free marker so a mis-set threshold (silently emptying every
+                # result) is observable — counts + threshold only, no query/content.
+                logger.info(
+                    "knowledge.search.filtered",
+                    extra={
+                        "context": {
+                            "retrieved": retrieved,
+                            "kept": len(hits),
+                            "min_score": self._min_score,
+                        }
+                    },
+                )
         if not hits:
             return SearchResult("empty", [])
         return SearchResult("ok", hits)
