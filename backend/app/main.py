@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import __version__
 from app.agent.adapter import OpenAIResponsesAdapter
 from app.api import dev, health
+from app.api.admin import router as admin_router
 from app.api.public import conversations as public_conversations
 from app.api.public import feedback as public_feedback
 from app.api.public import messages as public_messages
@@ -100,6 +101,7 @@ def create_app() -> FastAPI:
     app.include_router(public_messages.router)
     app.include_router(public_requests.router)
     app.include_router(public_feedback.router)
+    app.include_router(admin_router.router)
     return app
 
 

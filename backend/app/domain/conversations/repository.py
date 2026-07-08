@@ -200,3 +200,50 @@ class ConversationRepository:
             {"_id": conversation_id},
             {"$set": {"outcome": outcome, "last_activity_at": _now()}},
         )
+
+    async def add_unsupported_question(self, conversation_id: str, question: str) -> None:
+        """Record a verbatim unsupported question for the admin unresolved list (§7)."""
+        await self._collection.update_one(
+            {"_id": conversation_id},
+            {"$push": {"unsupported_questions": {"question": question, "at": _now()}}},
+        )
+
+    # --- Read-only admin queries ---
+
+    async def total(self) -> int:
+        return await self._collection.count_documents({})
+
+    async def count_by(self, field: str) -> dict[str, int]:
+        cursor = self._collection.aggregate(
+            [{"$group": {"_id": f"${field}", "count": {"$sum": 1}}}]
+        )
+        return {
+            (str(doc["_id"]) if doc["_id"] is not None else "unset"): int(doc["count"])
+            for doc in await cursor.to_list(length=None)
+        }
+
+    async def list_recent(self, limit: int = 100) -> list[Conversation]:
+        docs = (
+            await self._collection.find()
+            .sort("last_activity_at", -1)
+            .limit(limit)
+            .to_list(length=limit)
+        )
+        return [Conversation.model_validate(doc) for doc in docs]
+
+    async def list_unsupported(self, limit: int = 100) -> list[dict[str, Any]]:
+        pipeline: list[dict[str, Any]] = [
+            {"$match": {"unsupported_questions.0": {"$exists": True}}},
+            {"$unwind": "$unsupported_questions"},
+            {
+                "$project": {
+                    "_id": 0,
+                    "conversation_id": "$_id",
+                    "question": "$unsupported_questions.question",
+                    "at": "$unsupported_questions.at",
+                }
+            },
+            {"$sort": {"at": -1}},
+            {"$limit": limit},
+        ]
+        return await self._collection.aggregate(pipeline).to_list(length=limit)

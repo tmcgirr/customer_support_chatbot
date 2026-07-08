@@ -63,3 +63,33 @@ class RequestRepository:
             existing = await self._collection.find_one(key_filter)
             assert existing is not None
             return RequestRecord.model_validate(existing), True
+
+    # --- Read-only admin queries ---
+
+    async def total(self) -> int:
+        return await self._collection.count_documents({})
+
+    async def count_by(self, field: str) -> dict[str, int]:
+        cursor = self._collection.aggregate(
+            [{"$group": {"_id": f"${field}", "count": {"$sum": 1}}}]
+        )
+        return {str(doc["_id"]): int(doc["count"]) for doc in await cursor.to_list(length=None)}
+
+    async def list_filtered(
+        self,
+        type_filter: str | None = None,
+        status_filter: str | None = None,
+        limit: int = 100,
+    ) -> list[RequestRecord]:
+        query: dict[str, Any] = {}
+        if type_filter:
+            query["type"] = type_filter
+        if status_filter:
+            query["status"] = status_filter
+        docs = (
+            await self._collection.find(query)
+            .sort("created_at", -1)
+            .limit(limit)
+            .to_list(length=limit)
+        )
+        return [RequestRecord.model_validate(doc) for doc in docs]

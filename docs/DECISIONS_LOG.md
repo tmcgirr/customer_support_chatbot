@@ -135,3 +135,34 @@ Choices made during implementation that the planning docs did not fully specify
   submission, so a reused key means the same request); checking the conversation exists / is
   active before filing a request (a stale token can currently file against a deleted
   conversation; `set_outcome` no-ops there).
+
+## Phase 7 — read-only admin dashboard
+
+- **2026-07-07 · PII is masked at READ time, not at store time.** Transcripts and unresolved
+  questions keep the verbatim value in Mongo; the admin router masks emails/phones on the way
+  out (`mask_pii_in_text`). This keeps the data available for a future audited reveal while
+  the default admin view never shows raw contact info (contracts §10).
+- **2026-07-07 · Masking covers email AND phone in all free text** (transcript content +
+  unresolved questions). Email → `a***@acme.com`; phone → `***-***-NN` (last two digits). The
+  phone regex only masks 7–15-digit runs, so short codes / 4-digit years survive; a date like
+  `2026-07-07` is over-masked (harmless in an admin view — safety over precision). Structured
+  request `contact.email` uses `mask_email`; `contact.name` is never exposed by the admin API,
+  and `contact.company` is returned as-is (§10 scopes masking to email/phone).
+- **2026-07-07 · Admin is HTTP Basic + constant-time compare on every route.** All five routes
+  are GET/read-only and carry `AdminDep`; a bad/absent credential 401s with
+  `WWW-Authenticate: Basic` and never echoes the configured password. Creds in the UI live in
+  React memory only (no localStorage).
+- **2026-07-07 · Admin UI is a second Vite entry** (`admin.html` + `src/admin/**`), fully
+  separate from the widget bundle; the multi-entry build emits both `dist/index.html` and
+  `dist/admin.html`.
+
+### Deferred from the Phase 7 adversarial review
+
+- **Default admin password guard → Phase 8.** `ADMIN_PASSWORD` defaults to the in-repo
+  `dev-only-change-me`; a deployment that forgets to set it accepts a well-known credential
+  that unlocks the whole PII surface. Phase 8 (hardening/POC exit) should fail startup when
+  `env != dev` and any secret (admin password, `session_secret`) still equals its default.
+- **Exotic-email regex gaps → accepted for POC.** The email regex requires an ASCII dotted
+  domain + TLD, so internationalized (`用户@例え.jp`), single-label (`user@mailhost`), and
+  IP-literal (`user@[192.168.0.1]`) addresses pass through unmasked. Standard public-support
+  emails are covered; broadening (or an on-`@` heuristic) is a V1 refinement.

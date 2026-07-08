@@ -152,6 +152,14 @@ class ChatOrchestrator:
 
                 for call in round_tool_calls:
                     result = await self._tool_registry.execute(call.name, call.arguments)
+                    if (
+                        call.name == "get_canonical_answer"
+                        and call.arguments.get("intent") == "unsupported"
+                    ):
+                        # Surface the verbatim question in the admin unresolved list (§7).
+                        await self._repo.add_unsupported_question(
+                            conversation.id, user_message.content
+                        )
                     if result.canonical_answer_id is not None:
                         canonical_answer_id = result.canonical_answer_id
                     for source in result.sources:
