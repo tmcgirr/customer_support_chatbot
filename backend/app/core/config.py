@@ -94,6 +94,9 @@ class Settings(BaseSettings):
     worker_job_timeout_seconds: float = 50.0
     job_backoff_base_seconds: float = 5.0  # retry backoff = base * 2^(attempts-1)
     conversation_abandon_seconds: int = 86400  # 24h with no activity → abandoned
+    # A request still received/delivering this long after creation is reconciled by
+    # the delivery sweep (its job crashed/timed-out, or its enqueue was lost).
+    delivery_stuck_seconds: int = 900
 
     # --- Admin (used from Phase 7) ---
     admin_username: str = "admin"

@@ -311,3 +311,27 @@ Choices made during implementation that the planning docs did not fully specify
   prod should add a job heartbeat and an atomic enqueue-if-absent (partial unique on the pending state).
 - **Deploy:** staging adds a `worker` service (same image, `python -m app.worker`). Job types
   `deliver_request`/`poll_indexing`/`retention_sweep` have no handler yet (land in V4/V5/V6).
+
+## Phase V4 — asynchronous request delivery
+
+- **2026-07-08 · Delivery is worker-owned and exactly-once (invariant #11).** `app/domain/delivery/`
+  is a provider-isolated boundary (`DeliveryClient` → normalized `DeliveryResult`/`DeliveryError`; no
+  SDK type escapes). On fresh request create the service enqueues ONE `deliver_request` job
+  (flag-gated by `enable_delivery`; replay never re-enqueues). The `deliver_request` handler:
+  already-delivered/failed → no-op; on a retry it first probes the destination
+  (`find_by_reference`) and never blind re-sends; a transient error retries with backoff, a
+  permanent/exhausted error PARKS `delivery_failed` (never a re-prompt). Request status:
+  received → delivering → delivered / delivery_failed; `external_reference` is admin-only
+  (invariant #6). Default `SimulatedDeliveryClient` until real CRM/ticketing destinations are
+  selected (doc 06 §6).
+- **2026-07-08 · Adversarial-review fixes.** (HIGH) a delivery job that terminated by a route the
+  service didn't park (timeout, hard-crash, unexpected error) left the request orphaned in
+  `delivering` — now the worker reconciles a dead-lettered `deliver_request` to `delivery_failed`,
+  AND a periodic `delivery_reconcile` sweep parks stuck `delivering` requests (no active job) and
+  re-enqueues `received` requests whose enqueue was lost (MED). (MED) the service now treats
+  `delivered`/`delivery_failed` as terminal and `mark_delivering` is status-guarded, so a stray/re-run
+  job can't resurrect + double-send a parked request. (MED) the `DeliveryClient` protocol documents
+  that a real adapter MUST send `record.reference` as a server-side idempotency key (the probe is a
+  best-effort secondary guard against replica lag).
+- **Verified:** exactly-once claim, enqueue-once, probe-before-retry, provider isolation, PII/#6 all
+  confirmed by the reviewer. 216 backend tests.

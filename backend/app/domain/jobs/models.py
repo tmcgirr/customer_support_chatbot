@@ -21,6 +21,7 @@ JobType = Literal[
     "knowledge_review_reminder",  # periodic: flag knowledge sources past review_date
     "stale_lock_sweep",  # periodic: release leaked conversation run-locks
     "abandonment_sweep",  # periodic: mark inactive conversations abandoned
+    "delivery_reconcile",  # periodic: park/re-enqueue requests orphaned by a dead delivery job
 ]
 
 JobStatus = Literal["pending", "running", "done", "failed", "dead_letter"]

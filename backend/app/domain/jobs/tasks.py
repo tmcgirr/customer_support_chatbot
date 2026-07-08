@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from app.domain.aggregates.repository import AggregatesRepository
 from app.domain.conversations.repository import ConversationRepository
 from app.domain.feedback.repository import FeedbackRepository
+from app.domain.jobs.repository import JobRepository
 from app.domain.knowledge.repository import KnowledgeSourceRepository
 from app.domain.requests.repository import RequestRepository
 
@@ -61,3 +62,28 @@ async def run_daily_aggregates(
     date_key = _now().date().isoformat()
     await aggregates.record_daily(date_key, payload)
     return payload
+
+
+async def run_reconcile_deliveries(
+    requests: RequestRepository,
+    jobs: JobRepository,
+    *,
+    stuck_after_seconds: int,
+    enable_delivery: bool,
+) -> dict[str, int]:
+    """Reconcile requests whose delivery job terminated without parking them (worker
+    crash, timeout, lost enqueue): a stuck ``delivering`` with no active job → park
+    ``delivery_failed``; a ``received`` with no job (lost enqueue) → re-enqueue.
+    Requests with an active delivery job are left alone."""
+    cutoff = _now() - timedelta(seconds=stuck_after_seconds)
+    reenqueued = parked = 0
+    for record in await requests.list_undelivered(cutoff):
+        if await jobs.has_active_for_resource("deliver_request", record.id):
+            continue  # still being delivered/retried
+        if record.status == "delivering":
+            await requests.mark_delivery_failed(record.id, "orphaned_delivery")
+            parked += 1
+        elif record.status == "received" and enable_delivery:
+            await jobs.enqueue("deliver_request", resource_id=record.id)
+            reenqueued += 1
+    return {"parked": parked, "reenqueued": reenqueued}

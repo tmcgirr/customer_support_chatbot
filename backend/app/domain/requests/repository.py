@@ -1,5 +1,6 @@
 """Request repository (contracts §8, §9). Idempotent per (conversation, key)."""
 
+from datetime import UTC, datetime
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorCollection
@@ -9,6 +10,10 @@ from pymongo.errors import DuplicateKeyError
 from app.domain.requests.models import RequestRecord
 
 Collection = AsyncIOMotorCollection[dict[str, Any]]
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
 
 
 async def ensure_indexes(collection: Collection) -> None:
@@ -63,6 +68,64 @@ class RequestRepository:
             existing = await self._collection.find_one(key_filter)
             assert existing is not None
             return RequestRecord.model_validate(existing), True
+
+    # --- Delivery state (worker) ---
+
+    async def get(self, request_id: str) -> RequestRecord | None:
+        doc = await self._collection.find_one({"_id": request_id})
+        return RequestRecord.model_validate(doc) if doc is not None else None
+
+    async def mark_delivering(self, request_id: str, destination: str) -> None:
+        # Only from a non-terminal state — never resurrect a delivered/failed request.
+        await self._collection.update_one(
+            {"_id": request_id, "status": {"$in": ["received", "delivering"]}},
+            {
+                "$set": {"status": "delivering", "destination": destination},
+                "$inc": {"delivery_attempts": 1},
+            },
+        )
+
+    async def list_undelivered(
+        self, created_before: datetime, limit: int = 200
+    ) -> list[RequestRecord]:
+        """Requests stuck in received/delivering since before ``created_before`` — the
+        reconciliation sweep re-enqueues or parks these (worker crash / lost enqueue)."""
+        docs = (
+            await self._collection.find(
+                {
+                    "status": {"$in": ["received", "delivering"]},
+                    "created_at": {"$lt": created_before},
+                }
+            )
+            .limit(limit)
+            .to_list(length=limit)
+        )
+        return [RequestRecord.model_validate(doc) for doc in docs]
+
+    async def mark_delivered(self, request_id: str, external_reference: str) -> None:
+        await self._collection.update_one(
+            {"_id": request_id},
+            {
+                "$set": {
+                    "status": "delivered",
+                    "external_reference": external_reference,
+                    "delivered_at": _now(),
+                    "last_delivery_error": None,
+                }
+            },
+        )
+
+    async def mark_delivery_failed(self, request_id: str, error_code: str) -> None:
+        await self._collection.update_one(
+            {"_id": request_id},
+            {"$set": {"status": "delivery_failed", "last_delivery_error": error_code}},
+        )
+
+    async def record_delivery_error(self, request_id: str, error_code: str) -> None:
+        """A transient failure that will be retried — keep status 'delivering'."""
+        await self._collection.update_one(
+            {"_id": request_id}, {"$set": {"last_delivery_error": error_code}}
+        )
 
     # --- Read-only admin queries ---
 

@@ -43,6 +43,9 @@ async def ensure_indexes(collection: Collection) -> None:
     )
     await collection.create_index([("type", ASCENDING), ("status", ASCENDING)], name="type_status")
     await collection.create_index(
+        [("resource_id", ASCENDING), ("type", ASCENDING)], name="resource_type", sparse=True
+    )
+    await collection.create_index(
         [("terminal_at", ASCENDING)],
         name="terminal_ttl",
         expireAfterSeconds=_TERMINAL_TTL_SECONDS,
@@ -80,6 +83,18 @@ class JobRepository:
         """Whether a pending/running job of this type exists (scheduler dedup)."""
         doc = await self._collection.find_one(
             {"type": job_type, "status": {"$in": list(_ACTIVE_STATUSES)}}
+        )
+        return doc is not None
+
+    async def has_active_for_resource(self, job_type: JobType, resource_id: str) -> bool:
+        """Whether a pending/running job of this type targets ``resource_id`` — the
+        delivery reconciliation sweep uses this to avoid touching in-flight requests."""
+        doc = await self._collection.find_one(
+            {
+                "type": job_type,
+                "resource_id": resource_id,
+                "status": {"$in": list(_ACTIVE_STATUSES)},
+            }
         )
         return doc is not None
 

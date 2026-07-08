@@ -13,6 +13,7 @@ from app.core.security import SessionClaims, verify_session_token
 from app.domain.canonical.repository import CanonicalAnswerRepository
 from app.domain.conversations.repository import ConversationRepository
 from app.domain.feedback.repository import FeedbackRepository
+from app.domain.jobs.repository import JobRepository
 from app.domain.knowledge.search import KnowledgeSearch
 from app.domain.ratelimit.repository import RateLimitRepository
 from app.domain.requests.repository import RequestRepository
@@ -36,6 +37,10 @@ def get_canonical_repository(request: Request) -> CanonicalAnswerRepository:
 
 def get_request_repository(request: Request) -> RequestRepository:
     return RequestRepository(request.app.state.db["requests"])
+
+
+def get_job_repository(request: Request) -> JobRepository:
+    return JobRepository(request.app.state.db["jobs"])
 
 
 def get_feedback_repository(request: Request) -> FeedbackRepository:
@@ -86,8 +91,18 @@ def get_orchestrator(
 OrchestratorDep = Annotated[ChatOrchestrator, Depends(get_orchestrator)]
 
 
-def get_request_service(request_repo: RequestRepoDep, conversation_repo: RepoDep) -> RequestService:
-    return RequestService(request_repo, conversation_repo)
+JobRepoDep = Annotated[JobRepository, Depends(get_job_repository)]
+
+
+def get_request_service(
+    request_repo: RequestRepoDep, conversation_repo: RepoDep, jobs: JobRepoDep
+) -> RequestService:
+    return RequestService(
+        request_repo,
+        conversation_repo,
+        jobs=jobs,
+        enable_delivery=get_settings().enable_delivery,
+    )
 
 
 RequestServiceDep = Annotated[RequestService, Depends(get_request_service)]

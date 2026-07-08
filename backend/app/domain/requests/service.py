@@ -6,9 +6,13 @@ from typing import Any
 
 from app.core import ids
 from app.core.errors import AppError, ErrorCode
+from app.core.logging import get_logger
 from app.domain.conversations.repository import ConversationRepository
+from app.domain.jobs.repository import JobRepository
 from app.domain.requests.models import Contact, RequestRecord, RequestType
 from app.domain.requests.repository import RequestRepository
+
+logger = get_logger("app.requests")
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _ISSUE_CATEGORIES = {"forgot_password", "no_access", "error", "other"}
@@ -39,10 +43,17 @@ def _valid_email(value: str | None) -> bool:
 
 class RequestService:
     def __init__(
-        self, request_repo: RequestRepository, conversation_repo: ConversationRepository
+        self,
+        request_repo: RequestRepository,
+        conversation_repo: ConversationRepository,
+        *,
+        jobs: JobRepository | None = None,
+        enable_delivery: bool = False,
     ) -> None:
         self._requests = request_repo
         self._conversations = conversation_repo
+        self._jobs = jobs
+        self._enable_delivery = enable_delivery
 
     def _validate(
         self,
@@ -125,4 +136,9 @@ class RequestService:
         # Idempotent $set; run on both fresh and race-replay so a request whose
         # outcome write previously failed is reconciled on retry.
         await self._conversations.set_outcome(conversation_id, _OUTCOME[stored.type])
+        # Enqueue delivery exactly once — only the fresh-create winner, and only when
+        # delivery is enabled (dark-launch flag). The browser never triggers delivery
+        # directly; the worker owns the external side effect (invariant #11).
+        if not duplicate and self._enable_delivery and self._jobs is not None:
+            await self._jobs.enqueue("deliver_request", resource_id=stored.id)
         return stored, duplicate

@@ -23,6 +23,8 @@ from app.core.db import create_mongo_client, get_database
 from app.core.logging import configure_logging, get_logger
 from app.domain.aggregates.repository import AggregatesRepository
 from app.domain.conversations.repository import ConversationRepository
+from app.domain.delivery.client import DeliveryClient, SimulatedDeliveryClient
+from app.domain.delivery.service import DeliveryService
 from app.domain.feedback.repository import FeedbackRepository
 from app.domain.jobs.models import Job, JobType
 from app.domain.jobs.repository import JobRepository
@@ -31,6 +33,7 @@ from app.domain.jobs.tasks import (
     run_abandonment_sweep,
     run_daily_aggregates,
     run_knowledge_review_reminder,
+    run_reconcile_deliveries,
     run_stale_lock_sweep,
 )
 from app.domain.knowledge.repository import KnowledgeSourceRepository
@@ -45,6 +48,7 @@ Database = AsyncIOMotorDatabase[dict[str, Any]]
 _SCHEDULE: dict[JobType, int] = {
     "stale_lock_sweep": 300,
     "abandonment_sweep": 3600,
+    "delivery_reconcile": 300,
     "daily_aggregates": 86_400,
     "knowledge_review_reminder": 86_400,
 }
@@ -53,13 +57,20 @@ _MAX_DRAIN_PER_TICK = 20  # jobs to run per loop iteration before re-scheduling
 
 
 class Worker:
-    def __init__(self, db: Database, *, settings: Settings) -> None:
+    def __init__(
+        self, db: Database, *, settings: Settings, delivery_client: DeliveryClient | None = None
+    ) -> None:
         self._jobs = JobRepository(db["jobs"])
         self._conversations = ConversationRepository(db["conversations"])
         self._requests = RequestRepository(db["requests"])
         self._feedback = FeedbackRepository(db["feedback"])
         self._knowledge = KnowledgeSourceRepository(db["knowledge_sources"])
         self._aggregates = AggregatesRepository(db["aggregates"])
+        # Default to the simulated client until real CRM/ticketing destinations are
+        # selected (doc 06 §6); swap in a real DeliveryClient here when they are.
+        self._delivery = DeliveryService(
+            self._requests, delivery_client or SimulatedDeliveryClient()
+        )
         self._settings = settings
         self._owner = ids.prefixed_id("wrk")
         self._stop = asyncio.Event()
@@ -138,6 +149,13 @@ class Worker:
                     extra={"context": {"job_type": job.type, "job_id": job.id}},
                 )
             else:
+                if status == "dead_letter" and job.type == "deliver_request" and job.resource_id:
+                    # A delivery job that terminated by a route the service didn't park
+                    # (timeout / unexpected error) — reconcile the request so it isn't
+                    # orphaned in 'delivering' (invariant #11: park for admin).
+                    await self._requests.mark_delivery_failed(
+                        job.resource_id, "delivery_dead_letter"
+                    )
                 logger.warning(
                     "worker.job.failed",
                     exc_info=True,
@@ -163,7 +181,13 @@ class Worker:
 
     async def _dispatch(self, job: Job) -> None:
         job_type = job.type
-        if job_type == "stale_lock_sweep":
+        if job_type == "deliver_request":
+            if job.resource_id is None:
+                raise RuntimeError("deliver_request job has no resource_id")
+            await self._delivery.deliver(
+                job.resource_id, attempt=job.attempts, max_attempts=job.max_attempts
+            )
+        elif job_type == "stale_lock_sweep":
             await run_stale_lock_sweep(self._conversations, self._settings.lock_stale_seconds)
         elif job_type == "abandonment_sweep":
             await run_abandonment_sweep(
@@ -173,12 +197,19 @@ class Worker:
             due = await run_knowledge_review_reminder(self._knowledge)
             if due:
                 logger.info("worker.review_due", extra={"context": {"count": len(due)}})
+        elif job_type == "delivery_reconcile":
+            await run_reconcile_deliveries(
+                self._requests,
+                self._jobs,
+                stuck_after_seconds=self._settings.delivery_stuck_seconds,
+                enable_delivery=self._settings.enable_delivery,
+            )
         elif job_type == "daily_aggregates":
             await run_daily_aggregates(
                 self._conversations, self._requests, self._feedback, self._aggregates
             )
         else:
-            # deliver_request / poll_indexing / retention_sweep land in later phases.
+            # poll_indexing (V5) / retention_sweep (V6) land in later phases.
             raise RuntimeError(f"no handler registered for job type {job_type!r}")
 
 

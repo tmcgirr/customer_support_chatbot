@@ -15,7 +15,9 @@ from app.agent.adapter import (
     ToolSpec,
     Usage,
 )
+from app.domain.delivery.client import DeliveryError, DeliveryResult
 from app.domain.knowledge.search import SearchResult
+from app.domain.requests.models import RequestRecord
 
 
 @dataclass
@@ -81,6 +83,47 @@ class FakeAdapter:
             yield event
         if self.raises is not None:
             raise self.raises
+
+
+class FakeDeliveryClient:
+    """Scriptable delivery client (never calls a real destination).
+
+    ``deliver_results`` is consumed one-per-call (a ``DeliveryResult`` is returned,
+    a ``DeliveryError`` is raised); when exhausted, it succeeds with a synthetic
+    ref. ``existing`` maps a request reference → external ref that
+    ``find_by_reference`` reports as already-delivered; ``find_raises`` makes the
+    idempotency probe raise (ambiguous).
+    """
+
+    def __init__(
+        self,
+        *,
+        deliver_results: list[DeliveryResult | DeliveryError] | None = None,
+        existing: dict[str, str] | None = None,
+        find_raises: bool = False,
+    ) -> None:
+        self._deliver_results = list(deliver_results or [])
+        self._existing = existing or {}
+        self._find_raises = find_raises
+        self.deliver_calls = 0
+        self.find_calls = 0
+
+    async def deliver(self, record: RequestRecord) -> DeliveryResult:
+        self.deliver_calls += 1
+        outcome: DeliveryResult | DeliveryError = (
+            self._deliver_results.pop(0)
+            if self._deliver_results
+            else DeliveryResult(external_reference=f"ext-{record.reference}")
+        )
+        if isinstance(outcome, DeliveryError):
+            raise outcome
+        return outcome
+
+    async def find_by_reference(self, reference: str) -> str | None:
+        self.find_calls += 1
+        if self._find_raises:
+            raise DeliveryError("probe_failed", retryable=True)
+        return self._existing.get(reference)
 
 
 class FakeKnowledgeSearch:

@@ -40,10 +40,88 @@ async def test_worker_runs_a_scheduled_job_to_done(db: Database) -> None:
     assert convo_doc is not None and convo_doc["active_run"] is None  # handler ran
 
 
+async def test_worker_delivers_a_request(db: Database) -> None:
+    # The deliver_request handler routes through DeliveryService + the (simulated)
+    # client, marking the request delivered with a synthetic external reference.
+    from datetime import UTC, datetime
+
+    from app.core import ids
+    from app.domain.requests.models import Contact, RequestRecord
+    from app.domain.requests.repository import RequestRepository
+
+    requests = RequestRepository(db["requests"])
+    record = RequestRecord(
+        id=ids.request_id(),
+        type="strategy_call",
+        conversation_id="cnv_1",
+        idempotency_key="k1",
+        reference="REF-WORKER",
+        contact=Contact(email="a@b.com"),
+        consent_version="c",
+        created_at=datetime.now(UTC),
+    )
+    await db["requests"].insert_one(record.model_dump(by_alias=True))
+    jobs = JobRepository(db["jobs"])
+    await jobs.enqueue("deliver_request", resource_id=record.id)
+
+    worker = _worker(db)
+    claimed = await jobs.claim(worker._owner, lease_seconds=60)  # noqa: SLF001
+    assert claimed is not None
+    await worker._run_job(claimed)  # noqa: SLF001
+
+    stored = await requests.get(record.id)
+    assert stored is not None and stored.status == "delivered"
+    assert stored.external_reference == "sim-REF-WORKER"
+
+
+async def test_worker_deadletter_parks_the_request(db: Database) -> None:
+    # An unexpected (non-DeliveryError) failure that exhausts retries dead-letters
+    # the job; the worker must reconcile the request to delivery_failed (not leave
+    # it stuck in 'delivering').
+    from datetime import UTC, datetime
+
+    from app.core import ids
+    from app.domain.requests.models import Contact, RequestRecord
+    from app.domain.requests.repository import RequestRepository
+
+    class _BoomClient:
+        async def deliver(self, record: object) -> object:
+            raise RuntimeError("boom")
+
+        async def find_by_reference(self, reference: str) -> str | None:
+            return None
+
+    requests = RequestRepository(db["requests"])
+    record = RequestRecord(
+        id=ids.request_id(),
+        type="strategy_call",
+        conversation_id="cnv_1",
+        idempotency_key="k1",
+        reference="REF-DL",
+        contact=Contact(email="a@b.com"),
+        consent_version="c",
+        created_at=datetime.now(UTC),
+    )
+    await db["requests"].insert_one(record.model_dump(by_alias=True))
+    jobs = JobRepository(db["jobs"])
+    job = await jobs.enqueue("deliver_request", resource_id=record.id, max_attempts=1)
+
+    worker = Worker(db, settings=get_settings(), delivery_client=_BoomClient())  # type: ignore[arg-type]
+    claimed = await jobs.claim(worker._owner, lease_seconds=60)  # noqa: SLF001
+    assert claimed is not None
+    await worker._run_job(claimed)  # noqa: SLF001
+
+    job_doc = await db["jobs"].find_one({"_id": job.id})
+    assert job_doc is not None and job_doc["status"] == "dead_letter"
+    stored = await requests.get(record.id)
+    assert stored is not None and stored.status == "delivery_failed"
+    assert stored.last_delivery_error == "delivery_dead_letter"
+
+
 async def test_worker_dead_letters_a_job_with_no_handler(db: Database) -> None:
     jobs = JobRepository(db["jobs"])
-    # deliver_request has no handler in V3 → dispatch raises → dead-letter (max_attempts=1).
-    job = await jobs.enqueue("deliver_request", resource_id="req_1", max_attempts=1)
+    # poll_indexing has no handler yet (V5) → dispatch raises → dead-letter (max_attempts=1).
+    job = await jobs.enqueue("poll_indexing", resource_id="kbs_1", max_attempts=1)
 
     worker = _worker(db)
     claimed = await jobs.claim(worker._owner, lease_seconds=60)  # noqa: SLF001
