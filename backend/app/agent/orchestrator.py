@@ -13,7 +13,7 @@ exit path so a dropped turn can never brick a conversation at CONVERSATION_BUSY.
 
 import time
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from app.agent.actions import resolve_actions
 from app.agent.adapter import (
@@ -62,14 +62,33 @@ class ChatOrchestrator:
         *,
         tool_registry: ToolRegistry | None = None,
         prompt_version: str = CURRENT_PROMPT_VERSION,
+        lock_stale_seconds: int = 120,
     ) -> None:
         self._repo = repo
         self._adapter = adapter
         self._tool_registry = tool_registry
         self._prompt_version = prompt_version
+        self._lock_stale_seconds = lock_stale_seconds
+        # Refresh the lock well within the stale window so a live turn — however
+        # slow — always keeps a young lock and is never swept as leaked.
+        self._heartbeat_seconds = max(5, lock_stale_seconds // 3)
 
     async def start_turn(self, conversation_id: str, content: str, cmid: str) -> BeginTurnResult:
-        return await self._repo.begin_turn(conversation_id, content, cmid)
+        result = await self._repo.begin_turn(conversation_id, content, cmid)
+        if result.outcome == "BUSY":
+            # Opportunistic stale-lock recovery: a turn whose process died after
+            # acquiring the lock would otherwise brick the conversation at BUSY
+            # forever. If the lock is older than the stale threshold (longer than
+            # any real turn), release it and retry begin_turn exactly once. A
+            # genuinely in-flight turn has a young lock, so nothing is disturbed.
+            cutoff = _now() - timedelta(seconds=self._lock_stale_seconds)
+            if await self._repo.clear_stale_lock(conversation_id, cutoff):
+                logger.info(
+                    "chat.turn.lock_recovered",
+                    extra={"context": {"conversation_id": conversation_id}},
+                )
+                result = await self._repo.begin_turn(conversation_id, content, cmid)
+        return result
 
     def _build_window(self, conversation: Conversation) -> list[Message]:
         return [m for m in conversation.messages if m.status == "completed" and m.content]
@@ -117,6 +136,7 @@ class ChatOrchestrator:
         tools = self._tool_registry.specs() if self._tool_registry is not None else None
 
         started = time.perf_counter()
+        last_heartbeat = started
         parts: list[str] = []
         usage_in = 0
         usage_out = 0
@@ -137,6 +157,10 @@ class ChatOrchestrator:
                 async for event in self._adapter.send(
                     instructions=instructions, messages=input_items, tools=round_tools
                 ):
+                    now = time.perf_counter()
+                    if now - last_heartbeat >= self._heartbeat_seconds:
+                        await self._repo.touch_lock(conversation.id, run_id)
+                        last_heartbeat = now
                     if isinstance(event, TextDelta):
                         parts.append(event.text)
                         yield StreamMessage("response.delta", {"text": event.text})
@@ -251,9 +275,11 @@ class ChatOrchestrator:
         )
         yield StreamMessage("response.started", {})
         if assistant is None:
-            yield StreamMessage(
-                "response.completed", {"assistant_message_id": None, "suggested_actions": []}
-            )
+            # The original turn was appended but produced no reply (its process
+            # crashed mid-flight, and stale-lock recovery replayed it as a
+            # duplicate). Surface a retryable failure so the user can resend and
+            # get a real answer — never a silent blank completion.
+            yield self._failed_event(ErrorCode.INTERNAL_ERROR.value)
             return
         if assistant.content:
             yield StreamMessage("response.delta", {"text": assistant.content})

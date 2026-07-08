@@ -162,7 +162,39 @@ Choices made during implementation that the planning docs did not fully specify
   `dev-only-change-me`; a deployment that forgets to set it accepts a well-known credential
   that unlocks the whole PII surface. Phase 8 (hardening/POC exit) should fail startup when
   `env != dev` and any secret (admin password, `session_secret`) still equals its default.
+  **Done in Phase 8** (fail-closed, see below).
 - **Exotic-email regex gaps → accepted for POC.** The email regex requires an ASCII dotted
   domain + TLD, so internationalized (`用户@例え.jp`), single-label (`user@mailhost`), and
   IP-literal (`user@[192.168.0.1]`) addresses pass through unmasked. Standard public-support
   emails are covered; broadening (or an on-`@` heuristic) is a V1 refinement.
+
+## Phase 8 — hardening & POC exit
+
+- **2026-07-08 · Per-IP creation cap = fixed-window TTL counter, HMAC-keyed.** One doc per
+  (HMAC(ip):window) in `rate_limits`, atomic `find_one_and_update` upsert+`$inc`, Mongo TTL
+  purges expired windows. The IP is HMAC'd (never stored raw — §10). A fixed window can allow
+  up to ~2x the cap across a boundary — acceptable for a coarse abuse cap. Over cap →
+  `429 RATE_LIMIT` retryable. `client_ip` trusts leftmost `X-Forwarded-For` (POC deploy is
+  behind a trusted proxy) else the peer.
+- **2026-07-08 · Stale-lock recovery + heartbeat.** The send path clears a leaked lock older
+  than `lock_stale_seconds` (120s) and retries `begin_turn` once; `scripts/sweep_locks.py` is
+  the global cron sweep. A LIVE turn **heartbeats** its lock (~every `lock_stale_seconds/3`)
+  so however slow it is, it stays young and is never swept — the atomic turn op (invariant #3)
+  is preserved (heartbeat only refreshes `started_at`, never adds a second lock).
+- **2026-07-08 · Fail-closed secret guard.** `ENV` now defaults to `prod`; startup rejects the
+  in-repo default `SESSION_SECRET`/`ADMIN_PASSWORD`. Local dev, tests, and the compose api
+  service set `ENV=dev` explicitly (`tests/conftest.py` forces it; `backend/.env` gets an
+  `ENV=dev` line). A deploy that forgets `ENV` fails closed rather than booting insecure.
+- **2026-07-08 · Log-hygiene = static + runtime.** Event messages must be static string
+  literals (no f-strings/`%`-args); the formatter rejects `record.args` and any email in the
+  event string, and an AST scan (`test_log_hygiene.py`) enforces it across `app/` + `scripts/`.
+
+### Deferred from the Phase 8 adversarial review (→ V1)
+
+- **Dedicated rate-limit HMAC secret.** The limiter reuses `session_secret` to hash IPs. Two
+  independent one-way HMACs, no crypto cross-talk — a key-hygiene nicety, not a defect.
+- **`SESSION_EXTRA_SECRETS` not covered by the guard.** The startup guard checks
+  `session_secret`/`admin_password` but not retired keys in `session_extra_secrets` (which
+  default to empty, so no in-repo placeholder ships). Extend if that ever gets a default.
+- **Edge/CDN rate limiting.** The app-level per-IP cap is coarse; users behind one NAT share a
+  bucket. Tunable via `IP_CREATE_CAP`/`IP_CREATE_WINDOW_SECONDS`; edge limiting is the V1 shape.

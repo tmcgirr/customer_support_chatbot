@@ -7,10 +7,14 @@ This is the ONLY place the application reads environment/`.env` values
 from functools import lru_cache
 from urllib.parse import urlsplit
 
-from pydantic import SecretStr
+from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app import __version__
+
+# Placeholder secrets shipped in-repo for local dev. A non-dev deployment that
+# still uses one is a hard misconfiguration (see the startup guard below).
+_INSECURE_DEFAULT = "dev-only-change-me"
 
 
 class Settings(BaseSettings):
@@ -20,7 +24,10 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    env: str = "dev"
+    # Defaults to "prod" so a deployment that forgets to set ENV fails CLOSED —
+    # the secret guard below runs and rejects the in-repo placeholder secrets.
+    # Local dev / tests set ENV=dev explicitly (.env, compose, tests/conftest).
+    env: str = "prod"
     app_version: str = __version__
 
     # --- Persistence (URI may embed credentials; keep it a secret) ---
@@ -50,7 +57,14 @@ class Settings(BaseSettings):
     # --- Abuse caps ---
     message_cap: int = 40
     message_max_chars: int = 2000
+    # Per-IP conversation-creation cap over a fixed rolling window (contracts §3.1).
     ip_create_cap: int = 10
+    ip_create_window_seconds: int = 3600
+    # A run lock older than this is treated as leaked (crashed mid-turn) and may be
+    # released opportunistically so a conversation can't brick at CONVERSATION_BUSY.
+    # A LIVE turn heartbeats its lock (~ every lock_stale_seconds/3) so however slow
+    # it is, it stays young and is never swept; only a stopped turn goes stale.
+    lock_stale_seconds: int = 120
 
     # --- Admin (used from Phase 7) ---
     admin_username: str = "admin"
@@ -73,6 +87,28 @@ class Settings(BaseSettings):
                 ring[kid.strip()] = secret.strip()
         ring[self.session_key_id] = self.session_secret.get_secret_value()
         return ring
+
+    @model_validator(mode="after")
+    def _forbid_default_secrets_outside_dev(self) -> "Settings":
+        """Fail fast if a non-dev deployment still ships the in-repo placeholder
+        secrets. A default admin password or session secret in prod would let
+        anyone unlock the admin PII surface or forge session tokens."""
+        if self.env == "dev":
+            return self
+        insecure = [
+            name
+            for name, value in (
+                ("SESSION_SECRET", self.session_secret.get_secret_value()),
+                ("ADMIN_PASSWORD", self.admin_password.get_secret_value()),
+            )
+            if value == _INSECURE_DEFAULT or value == ""
+        ]
+        if insecure:
+            raise ValueError(
+                f"insecure default secret(s) in env={self.env!r}: {', '.join(insecure)}. "
+                "Set real values via environment before deploying, or set ENV=dev for local dev."
+            )
+        return self
 
     @property
     def mongo_db_name(self) -> str:

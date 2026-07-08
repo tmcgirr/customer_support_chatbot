@@ -19,6 +19,10 @@ services:
     ports:
       - "8080:8000"
     environment:
+      # Local full-stack test only — uses the in-repo default secrets, so mark it
+      # dev to satisfy the startup secret guard. A real deploy sets ENV to prod
+      # with real SESSION_SECRET / ADMIN_PASSWORD.
+      ENV: dev
       MONGO_URI: mongodb://mongo:27017/cadre_chatbot
       CORS_ORIGINS: http://localhost:5273
     depends_on:

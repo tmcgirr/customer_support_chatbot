@@ -12,6 +12,7 @@ from app.api.deps import (
     get_conversation_repository,
     get_feedback_repository,
     get_knowledge_search,
+    get_rate_limiter,
     get_request_repository,
 )
 from app.core.config import get_settings
@@ -20,6 +21,7 @@ from app.domain.canonical.repository import ensure_indexes as ensure_canonical
 from app.domain.conversations.repository import ConversationRepository, ensure_indexes
 from app.domain.feedback.repository import FeedbackRepository
 from app.domain.feedback.repository import ensure_indexes as ensure_feedback
+from app.domain.ratelimit.repository import RateLimitRepository
 from app.domain.requests.repository import RequestRepository
 from app.domain.requests.repository import ensure_indexes as ensure_requests
 from app.main import app
@@ -73,6 +75,13 @@ async def feedback_collection() -> AsyncIterator[Collection]:
 
 
 @pytest.fixture
+async def ratelimit_collection() -> AsyncIterator[Collection]:
+    # No TTL index needed in fast tests; delete_many gives per-test isolation.
+    async for coll in _fresh_collection("rate_limits"):
+        yield coll
+
+
+@pytest.fixture
 def fake_adapter() -> FakeAdapter:
     return FakeAdapter.replying(DEFAULT_REPLY)
 
@@ -88,6 +97,7 @@ async def client(
     canonical_collection: Collection,
     requests_collection: Collection,
     feedback_collection: Collection,
+    ratelimit_collection: Collection,
     fake_adapter: FakeAdapter,
     fake_knowledge: FakeKnowledgeSearch,
 ) -> AsyncIterator[httpx.AsyncClient]:
@@ -95,10 +105,12 @@ async def client(
     canonical_repo = CanonicalAnswerRepository(canonical_collection)
     request_repo = RequestRepository(requests_collection)
     feedback_repo = FeedbackRepository(feedback_collection)
+    rate_limiter = RateLimitRepository(ratelimit_collection, secret="test-secret")
     app.dependency_overrides[get_conversation_repository] = lambda: conversation_repo
     app.dependency_overrides[get_canonical_repository] = lambda: canonical_repo
     app.dependency_overrides[get_request_repository] = lambda: request_repo
     app.dependency_overrides[get_feedback_repository] = lambda: feedback_repo
+    app.dependency_overrides[get_rate_limiter] = lambda: rate_limiter
     app.dependency_overrides[get_adapter] = lambda: fake_adapter
     app.dependency_overrides[get_knowledge_search] = lambda: fake_knowledge
     transport = ASGITransport(app=app)

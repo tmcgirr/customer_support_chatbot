@@ -183,12 +183,41 @@ class ConversationRepository:
         return Conversation.model_validate(result) if result is not None else None
 
     async def clear_stale_locks(self, older_than: datetime) -> int:
-        """Release locks whose run started before ``older_than``. Returns count."""
+        """Release locks whose run started before ``older_than``. Returns count.
+
+        Global sweep used by ``scripts/sweep_locks.py`` for operational cleanup.
+        """
         result = await self._collection.update_many(
             {"active_run": {"$ne": None}, "active_run.started_at": {"$lt": older_than}},
             {"$set": {"active_run": None}},
         )
         return int(result.modified_count)
+
+    async def touch_lock(self, conversation_id: str, run_id: str) -> None:
+        """Heartbeat: refresh this run's lock timestamp so a live (slow) turn is
+        never mistaken for a leaked one by the stale-lock sweep. No-op if the
+        lock is gone or belongs to another run."""
+        await self._collection.update_one(
+            {"_id": conversation_id, "active_run.run_id": run_id},
+            {"$set": {"active_run.started_at": _now()}},
+        )
+
+    async def clear_stale_lock(self, conversation_id: str, older_than: datetime) -> bool:
+        """Release a single conversation's lock iff its run is older than
+        ``older_than`` (leaked by a crashed turn). Returns whether one was cleared.
+
+        Targeted variant for the opportunistic recovery on the send path — it
+        touches only the one document, never a hot-path collection scan.
+        """
+        result = await self._collection.update_one(
+            {
+                "_id": conversation_id,
+                "active_run": {"$ne": None},
+                "active_run.started_at": {"$lt": older_than},
+            },
+            {"$set": {"active_run": None}},
+        )
+        return result.modified_count > 0
 
     async def get_transcript(self, conversation_id: str) -> Conversation | None:
         doc = await self._collection.find_one({"_id": conversation_id})

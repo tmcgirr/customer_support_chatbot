@@ -13,6 +13,7 @@ tests rather than leaking silently in production.
 
 import json
 import logging
+import re
 import sys
 from contextvars import ContextVar
 from typing import Any
@@ -21,6 +22,11 @@ from app.core.ids import log_request_id
 
 # request_id for the in-flight HTTP request, bound by RequestContextMiddleware.
 request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
+
+# Event names must be static identifiers, so an email in the rendered message can
+# only be interpolated PII — reject it. (The AST scan in the test suite is the
+# primary net; this is the runtime backstop.)
+_EVENT_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 
 # Keys that must never appear in a log record — they can carry user content/PII.
 FORBIDDEN_CONTEXT_KEYS: frozenset[str] = frozenset(
@@ -51,11 +57,19 @@ class JsonFormatter(logging.Formatter):
     """Render a log record as a single-line JSON object with whitelisted keys."""
 
     def format(self, record: logging.LogRecord) -> str:
+        # The event must be a static string. Runtime %-args (record.args) or an
+        # interpolated email are the two ways PII sneaks into the message rather
+        # than the guarded context dict — reject both so it fails loudly.
+        if record.args:
+            raise ValueError("log event message must be a static string, not a formatted message")
+        event = record.getMessage()
+        if _EVENT_EMAIL_RE.search(event):
+            raise ValueError("log event message must not contain an email address")
         payload: dict[str, Any] = {
             "ts": self.formatTime(record, "%Y-%m-%dT%H:%M:%S%z"),
             "level": record.levelname,
             "logger": record.name,
-            "event": record.getMessage(),
+            "event": event,
         }
 
         rid = request_id_var.get()

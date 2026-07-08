@@ -1,11 +1,13 @@
 """Create-conversation endpoint (contracts §3.1)."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from app.agent.prompt import CURRENT_PROMPT_VERSION
-from app.api.deps import RepoDep
+from app.api.deps import RateLimiterDep, RepoDep
 from app.core.config import get_settings
+from app.core.errors import AppError, ErrorCode
+from app.core.net import client_ip
 from app.core.security import mint_session_token
 
 router = APIRouter(prefix="/api/v1/conversations", tags=["conversations"])
@@ -47,9 +49,19 @@ class CreateConversationResponse(BaseModel):
 
 @router.post("", response_model=CreateConversationResponse)
 async def create_conversation(
-    body: CreateConversationRequest, repo: RepoDep
+    body: CreateConversationRequest,
+    request: Request,
+    repo: RepoDep,
+    rate_limiter: RateLimiterDep,
 ) -> CreateConversationResponse:
     settings = get_settings()
+    allowed = await rate_limiter.hit(
+        client_ip(request),
+        limit=settings.ip_create_cap,
+        window_seconds=settings.ip_create_window_seconds,
+    )
+    if not allowed:
+        raise AppError(ErrorCode.RATE_LIMIT, retryable=True)
     conversation = await repo.create(
         entry_page=body.entry_page,
         locale=body.locale,

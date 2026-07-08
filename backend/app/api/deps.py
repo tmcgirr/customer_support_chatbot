@@ -14,12 +14,20 @@ from app.domain.canonical.repository import CanonicalAnswerRepository
 from app.domain.conversations.repository import ConversationRepository
 from app.domain.feedback.repository import FeedbackRepository
 from app.domain.knowledge.search import KnowledgeSearch
+from app.domain.ratelimit.repository import RateLimitRepository
 from app.domain.requests.repository import RequestRepository
 from app.domain.requests.service import RequestService
 
 
 def get_conversation_repository(request: Request) -> ConversationRepository:
     return ConversationRepository(request.app.state.db["conversations"])
+
+
+def get_rate_limiter(request: Request) -> RateLimitRepository:
+    return RateLimitRepository(
+        request.app.state.db["rate_limits"],
+        secret=get_settings().session_secret.get_secret_value(),
+    )
 
 
 def get_canonical_repository(request: Request) -> CanonicalAnswerRepository:
@@ -43,6 +51,7 @@ def get_knowledge_search(request: Request) -> KnowledgeSearch:
 
 
 RepoDep = Annotated[ConversationRepository, Depends(get_conversation_repository)]
+RateLimiterDep = Annotated[RateLimitRepository, Depends(get_rate_limiter)]
 CanonicalRepoDep = Annotated[CanonicalAnswerRepository, Depends(get_canonical_repository)]
 RequestRepoDep = Annotated[RequestRepository, Depends(get_request_repository)]
 FeedbackRepoDep = Annotated[FeedbackRepository, Depends(get_feedback_repository)]
@@ -66,7 +75,12 @@ ToolRegistryDep = Annotated[ToolRegistry, Depends(get_tool_registry)]
 def get_orchestrator(
     repo: RepoDep, adapter: AdapterDep, registry: ToolRegistryDep
 ) -> ChatOrchestrator:
-    return ChatOrchestrator(repo, adapter, tool_registry=registry)
+    return ChatOrchestrator(
+        repo,
+        adapter,
+        tool_registry=registry,
+        lock_stale_seconds=get_settings().lock_stale_seconds,
+    )
 
 
 OrchestratorDep = Annotated[ChatOrchestrator, Depends(get_orchestrator)]

@@ -1,8 +1,15 @@
-import httpx
-import pytest
-from httpx import ASGITransport
+import os
 
-from app.main import app
+# The test suite always runs as dev. Set this BEFORE importing app (which builds
+# Settings at import): env now defaults to "prod", whose secret guard would
+# otherwise reject the in-repo default secrets used in tests.
+os.environ["ENV"] = "dev"
+
+import httpx  # noqa: E402
+import pytest  # noqa: E402
+from httpx import ASGITransport  # noqa: E402
+
+from app.main import app  # noqa: E402
 
 
 @pytest.fixture
