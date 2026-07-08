@@ -40,3 +40,15 @@ class FeedbackRepository:
             return_document=ReturnDocument.AFTER,
         )
         return Feedback.model_validate(result)
+
+    async def total(self) -> int:
+        return await self._collection.count_documents({})
+
+    async def count_by(self, field: str) -> dict[str, int]:
+        cursor = self._collection.aggregate(
+            [{"$group": {"_id": f"${field}", "count": {"$sum": 1}}}]
+        )
+        return {
+            (str(doc["_id"]) if doc["_id"] is not None else "unset"): int(doc["count"])
+            for doc in await cursor.to_list(length=None)
+        }

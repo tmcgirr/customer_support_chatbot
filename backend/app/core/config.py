@@ -86,6 +86,15 @@ class Settings(BaseSettings):
     # it is, it stays young and is never swept; only a stopped turn goes stale.
     lock_stale_seconds: int = 120
 
+    # --- Background worker (V1: dedicated process, `python -m app.worker`) ---
+    worker_poll_seconds: float = 2.0  # idle poll interval between claims
+    worker_lease_seconds: int = 60  # job lease; a crashed worker's job is reclaimed after this
+    # Hard per-job handler timeout. MUST stay < worker_lease_seconds so a handler
+    # finishes (or times out) before its lease can be reclaimed — no live double-run.
+    worker_job_timeout_seconds: float = 50.0
+    job_backoff_base_seconds: float = 5.0  # retry backoff = base * 2^(attempts-1)
+    conversation_abandon_seconds: int = 86400  # 24h with no activity → abandoned
+
     # --- Admin (used from Phase 7) ---
     admin_username: str = "admin"
     admin_password: SecretStr = SecretStr("dev-only-change-me")

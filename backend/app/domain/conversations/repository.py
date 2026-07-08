@@ -219,6 +219,16 @@ class ConversationRepository:
         )
         return result.modified_count > 0
 
+    async def mark_abandoned(self, inactive_before: datetime) -> int:
+        """Mark still-active conversations with no activity since ``inactive_before``
+        as abandoned (feeds outcome metrics). Distinct from retention deletion (V6).
+        Returns the count updated."""
+        result = await self._collection.update_many(
+            {"status": "active", "last_activity_at": {"$lt": inactive_before}},
+            {"$set": {"status": "abandoned"}},
+        )
+        return int(result.modified_count)
+
     async def get_transcript(self, conversation_id: str) -> Conversation | None:
         doc = await self._collection.find_one({"_id": conversation_id})
         return Conversation.model_validate(doc) if doc is not None else None

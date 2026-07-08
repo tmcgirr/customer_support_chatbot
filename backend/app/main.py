@@ -22,6 +22,7 @@ from app.core.logging import configure_logging, get_logger, new_request_id, requ
 from app.domain.canonical.repository import ensure_indexes as ensure_canonical_indexes
 from app.domain.conversations.repository import ensure_indexes as ensure_conversation_indexes
 from app.domain.feedback.repository import ensure_indexes as ensure_feedback_indexes
+from app.domain.jobs.repository import ensure_indexes as ensure_job_indexes
 from app.domain.knowledge.repository import ensure_indexes as ensure_knowledge_indexes
 from app.domain.knowledge.search import KnowledgeSearch
 from app.domain.ratelimit.repository import ensure_indexes as ensure_ratelimit_indexes
@@ -40,6 +41,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await ensure_request_indexes(database["requests"])
     await ensure_feedback_indexes(database["feedback"])
     await ensure_ratelimit_indexes(database["rate_limits"])
+    await ensure_job_indexes(database["jobs"])
     app.state.mongo_client = client
     app.state.db = database
     app.state.adapter = OpenAIResponsesAdapter()

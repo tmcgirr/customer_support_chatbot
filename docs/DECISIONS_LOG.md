@@ -287,3 +287,27 @@ Choices made during implementation that the planning docs did not fully specify
   Guarded by new golden case `hec_001`. Real gate after V2: **35/35**.
 - **Deploy note:** a deployment must re-run `seed_canonical.py` after V2 or `get_canonical_answer(strategy_call)`
   returns unmatched and the booking dead-end returns (only `bok_001` catches it). Reseed on every content change.
+
+## Phase V3 — background worker & durable job model
+
+- **2026-07-08 · Job queue per contracts §7-8.** `jobs` collection + `JobRepository`: the claim is a
+  single atomic `find_one_and_update({status:pending, available_at≤now}, {$set running, lock_owner,
+  lock_expires_at}, $inc attempts)` (exactly-once, index-backed), retry-with-backoff → dead-letter, and
+  a lease so a crashed worker's job is reclaimed. Dedicated worker `app/worker.py` (`python -m app.worker`):
+  reclaim → schedule due periodic jobs → drain claims → dispatch by type; graceful shutdown on SIGTERM;
+  queue-depth/dead-letter monitoring. Periodic tasks (all idempotent): stale-lock sweep, abandonment
+  sweep, daily aggregates, knowledge-review reminder.
+- **2026-07-08 · Adversarial-review hardening (2 HIGH + fixes).** (H1) `reclaim_expired` now dead-letters
+  a budget-exhausted expired-lease job instead of looping forever — the poison-pill guard for a job that
+  hard-crashes the worker before `fail()` runs (matters for the V4/V5 network handlers). (H2) `complete`/
+  `fail` are guarded on `{lock_owner, status:running}` and no-op if the lease was reclaimed, so a slow
+  worker can't clobber the reclaimer's result (mirrors the turn-lock's run_id guard). (M5) a hard per-job
+  timeout `worker_job_timeout_seconds` (< lease) so a hung handler can't wedge the loop or outlive its
+  lease. (M6) a `{type,status}` index + a TTL on `terminal_at` so terminal jobs are pruned and the
+  scheduler's dedup check is index-backed.
+- **2026-07-08 · Accepted for V3, noted for multi-worker V1 deploy:** no per-job heartbeat (M3) and the
+  scheduler's check-then-act dedup (M4) can in principle double-run a periodic job across two workers —
+  harmless here because every periodic task is idempotent AND staging runs a single worker. Multi-worker
+  prod should add a job heartbeat and an atomic enqueue-if-absent (partial unique on the pending state).
+- **Deploy:** staging adds a `worker` service (same image, `python -m app.worker`). Job types
+  `deliver_request`/`poll_indexing`/`retention_sweep` have no handler yet (land in V4/V5/V6).

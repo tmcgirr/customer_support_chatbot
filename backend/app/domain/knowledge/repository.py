@@ -104,3 +104,11 @@ class KnowledgeSourceRepository:
         """Every recorded source, newest first (``_id`` is a time-sortable ULID)."""
         docs = await self._collection.find().sort("_id", -1).to_list(length=None)
         return [KnowledgeSource.model_validate(doc) for doc in docs]
+
+    async def list_due_for_review(self, as_of: datetime) -> list[KnowledgeSource]:
+        """Active sources whose ``review_date`` has passed — the knowledge-review
+        reminder job surfaces these for a content owner to re-approve (contracts §7)."""
+        docs = await self._collection.find(
+            {"review_date": {"$lt": as_of}, "lifecycle": "active"}
+        ).to_list(length=None)
+        return [KnowledgeSource.model_validate(doc) for doc in docs]
