@@ -21,7 +21,8 @@ pnpm install && pnpm dev         # widget dev server (port 5173)
 pnpm build && pnpm test
 
 # Infra
-docker compose up -d mongo       # local MongoDB (never install mongo globally)
+docker compose up -d mongo       # local dev: MongoDB only (app runs via uvicorn/pnpm above)
+# docker compose --profile full up --build   # full dockerized stack; api on :8080 (deploy shape)
 uv run python scripts/seed_canonical.py     # seed canonical answers
 uv run python scripts/upload_knowledge.py   # push docs/knowledge/ to Vector Store
 
