@@ -22,6 +22,7 @@ from app.core.config import Settings, get_settings
 from app.core.db import create_mongo_client, get_database
 from app.core.logging import configure_logging, get_logger
 from app.domain.aggregates.repository import AggregatesRepository
+from app.domain.audit.repository import AuditRepository
 from app.domain.conversations.repository import ConversationRepository
 from app.domain.delivery.client import DeliveryClient, SimulatedDeliveryClient
 from app.domain.delivery.service import DeliveryService
@@ -33,10 +34,14 @@ from app.domain.jobs.tasks import (
     run_abandonment_sweep,
     run_daily_aggregates,
     run_knowledge_review_reminder,
+    run_privacy_delete,
+    run_privacy_reconcile,
     run_reconcile_deliveries,
+    run_retention_sweep,
     run_stale_lock_sweep,
 )
 from app.domain.knowledge.repository import KnowledgeSourceRepository
+from app.domain.privacy.repository import PrivacyRequestRepository
 from app.domain.requests.repository import RequestRepository
 
 logger = get_logger("app.worker")
@@ -51,6 +56,8 @@ _SCHEDULE: dict[JobType, int] = {
     "delivery_reconcile": 300,
     "daily_aggregates": 86_400,
     "knowledge_review_reminder": 86_400,
+    "retention_sweep": 86_400,
+    "privacy_reconcile": 300,
 }
 _MONITOR_SECONDS = 60  # cadence for logging queue depth / dead-letter count
 _MAX_DRAIN_PER_TICK = 20  # jobs to run per loop iteration before re-scheduling
@@ -66,6 +73,8 @@ class Worker:
         self._feedback = FeedbackRepository(db["feedback"])
         self._knowledge = KnowledgeSourceRepository(db["knowledge_sources"])
         self._aggregates = AggregatesRepository(db["aggregates"])
+        self._privacy = PrivacyRequestRepository(db["privacy_requests"])
+        self._audit = AuditRepository(db["audit"])
         # Default to the simulated client until real CRM/ticketing destinations are
         # selected (doc 06 §6); swap in a real DeliveryClient here when they are.
         self._delivery = DeliveryService(
@@ -97,7 +106,10 @@ class Worker:
             await asyncio.wait_for(self._stop.wait(), timeout=seconds)
 
     async def _tick(self) -> None:
-        await self._jobs.reclaim_expired()
+        # Jobs dead-lettered by lease-expiry bypass fail(), so run their reconciliation
+        # hook here too (otherwise a hard-crashed final attempt leaves the resource stuck).
+        for dead in await self._jobs.reclaim_expired():
+            await self._on_dead_letter(dead)
         await self._schedule_due()
         await self._monitor()
         for _ in range(_MAX_DRAIN_PER_TICK):
@@ -149,13 +161,8 @@ class Worker:
                     extra={"context": {"job_type": job.type, "job_id": job.id}},
                 )
             else:
-                if status == "dead_letter" and job.type == "deliver_request" and job.resource_id:
-                    # A delivery job that terminated by a route the service didn't park
-                    # (timeout / unexpected error) — reconcile the request so it isn't
-                    # orphaned in 'delivering' (invariant #11: park for admin).
-                    await self._requests.mark_delivery_failed(
-                        job.resource_id, "delivery_dead_letter"
-                    )
+                if status == "dead_letter":
+                    await self._on_dead_letter(job)
                 logger.warning(
                     "worker.job.failed",
                     exc_info=True,
@@ -179,6 +186,19 @@ class Worker:
                 extra={"context": {"job_type": job.type, "job_id": job.id}},
             )
 
+    async def _on_dead_letter(self, job: Job) -> None:
+        """Reconcile a resource whose job dead-lettered (via either fail() or a
+        lease-expiry reclaim) so it never silently sticks — park the request for admin
+        / mark the erasure failed for follow-up (invariants #11, #13)."""
+        if job.resource_id is None:
+            return
+        if job.type == "deliver_request":
+            await self._requests.mark_delivery_failed(job.resource_id, "delivery_dead_letter")
+        elif job.type == "privacy_delete":
+            await self._privacy.mark_failed(
+                job.resource_id, error_code="privacy_delete_dead_letter"
+            )
+
     async def _dispatch(self, job: Job) -> None:
         job_type = job.type
         if job_type == "deliver_request":
@@ -191,7 +211,9 @@ class Worker:
             await run_stale_lock_sweep(self._conversations, self._settings.lock_stale_seconds)
         elif job_type == "abandonment_sweep":
             await run_abandonment_sweep(
-                self._conversations, self._settings.conversation_abandon_seconds
+                self._conversations,
+                self._settings.conversation_abandon_seconds,
+                anonymous_ttl_seconds=self._settings.retention_abandoned_conversation_days * 86_400,
             )
         elif job_type == "knowledge_review_reminder":
             due = await run_knowledge_review_reminder(self._knowledge)
@@ -208,8 +230,42 @@ class Worker:
             await run_daily_aggregates(
                 self._conversations, self._requests, self._feedback, self._aggregates
             )
+        elif job_type == "retention_sweep":
+            counts = await run_retention_sweep(
+                self._conversations,
+                self._requests,
+                self._feedback,
+                self._privacy,
+                abandoned_conversation_days=self._settings.retention_abandoned_conversation_days,
+                conversation_days=self._settings.retention_conversation_days,
+                request_days=self._settings.retention_request_days,
+                feedback_days=self._settings.retention_feedback_days,
+                privacy_request_days=self._settings.retention_privacy_request_days,
+                batch=self._settings.retention_sweep_batch,
+            )
+            logger.info("worker.retention_swept", extra={"context": {"counts": counts}})
+        elif job_type == "privacy_delete":
+            if job.resource_id is None:
+                raise RuntimeError("privacy_delete job has no resource_id")
+            counts = await run_privacy_delete(
+                self._privacy,
+                self._requests,
+                self._conversations,
+                self._feedback,
+                self._audit,
+                privacy_request_id=job.resource_id,
+            )
+            logger.info("worker.privacy_deleted", extra={"context": {"counts": counts}})
+        elif job_type == "privacy_reconcile":
+            reenqueued = await run_privacy_reconcile(
+                self._privacy, self._jobs, stuck_after_seconds=self._settings.delivery_stuck_seconds
+            )
+            if reenqueued:
+                logger.warning(
+                    "worker.privacy_reenqueued", extra={"context": {"count": reenqueued}}
+                )
         else:
-            # poll_indexing (V5) / retention_sweep (V6) land in later phases.
+            # poll_indexing (V5 knowledge upload) lands in a later phase.
             raise RuntimeError(f"no handler registered for job type {job_type!r}")
 
 

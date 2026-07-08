@@ -136,6 +136,49 @@ class RequestRepository:
         )
         return result.modified_count > 0
 
+    # --- Retention & deletion (V6) ---
+
+    async def find_by_email(self, email: str, *, limit: int = 500) -> list[RequestRecord]:
+        """All requests whose contact email matches (subject-match for a deletion)."""
+        docs = (
+            await self._collection.find({"contact.email": email}).limit(limit).to_list(length=limit)
+        )
+        return [RequestRecord.model_validate(doc) for doc in docs]
+
+    async def redact_for_deletion(self, request_ids: list[str]) -> int:
+        """Subject erasure: strip contact PII + the per-type ``fields`` payload from
+        matched requests, keeping the non-PII skeleton (_id, type, status, reference,
+        external_reference, timestamps) so a delivered request stays auditable and its
+        downstream (CRM) reference is still known. Idempotent (already-redacted →
+        matched-but-unchanged)."""
+        if not request_ids:
+            return 0
+        result = await self._collection.update_many(
+            {"_id": {"$in": request_ids}},
+            {
+                "$set": {
+                    "contact": {"name": None, "email": None, "company": None},
+                    "fields": {},
+                    "deletion_status": "deleted",
+                }
+            },
+        )
+        return int(result.modified_count)
+
+    async def delete_before(self, cutoff: datetime, *, limit: int) -> int:
+        """Retention: hard-delete requests created before ``cutoff`` (contact PII
+        past its retention period). Bounded per run."""
+        ids_to_drop = [
+            doc["_id"]
+            for doc in await self._collection.find({"created_at": {"$lt": cutoff}}, {"_id": 1})
+            .limit(limit)
+            .to_list(length=limit)
+        ]
+        if not ids_to_drop:
+            return 0
+        result = await self._collection.delete_many({"_id": {"$in": ids_to_drop}})
+        return int(result.deleted_count)
+
     # --- Read-only admin queries ---
 
     async def total(self) -> int:

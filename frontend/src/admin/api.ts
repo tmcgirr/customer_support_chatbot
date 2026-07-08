@@ -167,6 +167,24 @@ export interface UnresolvedResponse {
   questions: UnresolvedQuestion[];
 }
 
+export interface PrivacyRequest {
+  request_id: string;
+  type: "access" | "deletion";
+  /** Masked in the list view (e.g. "j***@e***.com"). */
+  requester_email: string;
+  conversation_id: string | null;
+  verification_status: "pending" | "verified" | "rejected";
+  status: "open" | "completed" | "failed";
+  /** Per-store counts of what an access/erasure touched, or null before completion. */
+  result_counts: Record<string, number> | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface PrivacyRequestsResponse {
+  requests: PrivacyRequest[];
+}
+
 export interface RequestFilters {
   type?: string;
   status?: string;
@@ -181,11 +199,13 @@ export interface AdminClient {
   listUnresolved(): Promise<UnresolvedResponse>;
   listCanonical(): Promise<CanonicalResponse>;
   listAudit(): Promise<AuditResponse>;
+  listPrivacyRequests(): Promise<PrivacyRequestsResponse>;
   // Privileged actions (admin role; 403 → AdminForbiddenError for a viewer).
   revealRequest(id: string, reason: string): Promise<RevealedRequest>;
   revealConversation(id: string, reason: string): Promise<RevealedConversation>;
   redeliver(id: string, reason: string): Promise<ActionResult>;
   approveCanonical(intent: string, reason: string): Promise<ActionResult>;
+  verifyPrivacyRequest(id: string, reason: string): Promise<ActionResult>;
 }
 
 function basicHeader(creds: AdminCreds): string {
@@ -246,6 +266,7 @@ export function createAdminClient(creds: AdminCreds): AdminClient {
     listUnresolved: () => request<UnresolvedResponse>("/unresolved-questions"),
     listCanonical: () => request<CanonicalResponse>("/canonical"),
     listAudit: () => request<AuditResponse>("/audit"),
+    listPrivacyRequests: () => request<PrivacyRequestsResponse>("/privacy-requests"),
     revealRequest: (id: string, reason: string) =>
       request<RevealedRequest>(`/requests/${encodeURIComponent(id)}/reveal`, {
         method: "POST",
@@ -263,6 +284,11 @@ export function createAdminClient(creds: AdminCreds): AdminClient {
       }),
     approveCanonical: (intent: string, reason: string) =>
       request<ActionResult>(`/canonical/${encodeURIComponent(intent)}/approve`, {
+        method: "POST",
+        body: { reason },
+      }),
+    verifyPrivacyRequest: (id: string, reason: string) =>
+      request<ActionResult>(`/privacy-requests/${encodeURIComponent(id)}/verify`, {
         method: "POST",
         body: { reason },
       }),

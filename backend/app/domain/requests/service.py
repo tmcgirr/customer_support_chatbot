@@ -1,12 +1,12 @@
 """Request service: replay-or-validate (contracts §3.4, §9), persist, set outcome."""
 
-import re
 from datetime import UTC, datetime
 from typing import Any
 
 from app.core import ids
 from app.core.errors import AppError, ErrorCode
 from app.core.logging import get_logger
+from app.core.validation import is_valid_email
 from app.domain.conversations.repository import ConversationRepository
 from app.domain.jobs.repository import JobRepository
 from app.domain.requests.models import Contact, RequestRecord, RequestType
@@ -14,7 +14,6 @@ from app.domain.requests.repository import RequestRepository
 
 logger = get_logger("app.requests")
 
-_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _ISSUE_CATEGORIES = {"forgot_password", "no_access", "error", "other"}
 _MAX_FIELD_LEN = 4000
 
@@ -38,7 +37,7 @@ def _now() -> datetime:
 
 
 def _valid_email(value: str | None) -> bool:
-    return _EMAIL_RE.match((value or "").strip()) is not None
+    return is_valid_email(value)
 
 
 class RequestService:

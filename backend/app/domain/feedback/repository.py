@@ -1,5 +1,6 @@
 """Feedback repository (contracts §8). One rating per message (idempotent)."""
 
+from datetime import datetime
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorCollection
@@ -40,6 +41,29 @@ class FeedbackRepository:
             return_document=ReturnDocument.AFTER,
         )
         return Feedback.model_validate(result)
+
+    # --- Retention & deletion (V6) ---
+
+    async def delete_for_conversations(self, conversation_ids: list[str]) -> int:
+        """Subject erasure cascade: drop feedback rows for the deleted conversations
+        (a comment field may carry free-text PII). Idempotent."""
+        if not conversation_ids:
+            return 0
+        result = await self._collection.delete_many({"conversation_id": {"$in": conversation_ids}})
+        return int(result.deleted_count)
+
+    async def delete_before(self, cutoff: datetime, *, limit: int) -> int:
+        """Retention: hard-delete feedback created before ``cutoff``."""
+        ids_to_drop = [
+            doc["_id"]
+            for doc in await self._collection.find({"created_at": {"$lt": cutoff}}, {"_id": 1})
+            .limit(limit)
+            .to_list(length=limit)
+        ]
+        if not ids_to_drop:
+            return 0
+        result = await self._collection.delete_many({"_id": {"$in": ids_to_drop}})
+        return int(result.deleted_count)
 
     async def total(self) -> int:
         return await self._collection.count_documents({})

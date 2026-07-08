@@ -15,6 +15,7 @@ from app.api.deps import (
     AuditRepoDep,
     CanonicalRepoDep,
     JobRepoDep,
+    PrivacyRepoDep,
     RepoDep,
     RequestRepoDep,
 )
@@ -146,6 +147,22 @@ class CanonicalSummary(BaseModel):
 
 class CanonicalListResponse(BaseModel):
     answers: list[CanonicalSummary]
+
+
+class PrivacySummary(BaseModel):
+    request_id: str
+    type: str
+    requester_email: str  # masked
+    conversation_id: str | None
+    verification_status: str
+    status: str
+    result_counts: dict[str, int] | None
+    created_at: datetime
+    completed_at: datetime | None
+
+
+class PrivacyListResponse(BaseModel):
+    requests: list[PrivacySummary]
 
 
 class UnresolvedQuestion(BaseModel):
@@ -435,6 +452,60 @@ async def approve_canonical(
     )
     await canonical.approve(intent)
     return ActionResponse(ok=True, detail=f"Approved canonical answer for {intent!r}.")
+
+
+@router.get("/privacy-requests", response_model=PrivacyListResponse)
+async def list_privacy_requests(_admin: AdminDep, privacy: PrivacyRepoDep) -> PrivacyListResponse:
+    """Access/deletion requests awaiting or past verification (email masked)."""
+    records = await privacy.list_recent()
+    return PrivacyListResponse(
+        requests=[
+            PrivacySummary(
+                request_id=r.id,
+                type=r.type,
+                requester_email=mask_email(r.requester_email),
+                conversation_id=r.conversation_id,
+                verification_status=r.verification_status,
+                status=r.status,
+                result_counts=r.result_counts,
+                created_at=r.created_at,
+                completed_at=r.completed_at,
+            )
+            for r in records
+        ]
+    )
+
+
+@router.post("/privacy-requests/{request_id}/verify", response_model=ActionResponse)
+async def verify_privacy_request(
+    request_id: str,
+    body: ReasonBody,
+    admin: AdminRoleDep,
+    privacy: PrivacyRepoDep,
+    jobs: JobRepoDep,
+    audit: AuditRepoDep,
+) -> ActionResponse:
+    """Confirm a subject's identity (admin only, reason required, audited). For a
+    DELETION request this enqueues the ``privacy_delete`` worker job — the erasure
+    itself never runs inline (invariant #13). Validate → audit → verify → enqueue so
+    an invalid request neither audits nor acts and a verify is always recorded."""
+    record = await privacy.get(request_id)
+    if record is None or record.verification_status != "pending":
+        raise AppError(ErrorCode.INVALID_REQUEST, "No pending privacy request to verify.")
+    await audit.record(
+        actor=admin.username,
+        role=admin.role,
+        action="verify_privacy_request",
+        target_type="privacy_request",
+        target_id=request_id,
+        reason=body.reason,
+    )
+    verified = await privacy.mark_verified(request_id, verified_by=admin.username)
+    # Guarded update: exactly one verifier wins, so at most one deletion job is enqueued.
+    if verified is not None and verified.type == "deletion":
+        await jobs.enqueue("privacy_delete", resource_id=request_id)
+    detail = "Verified; erasure enqueued." if record.type == "deletion" else "Verified."
+    return ActionResponse(ok=True, detail=detail)
 
 
 @router.get("/audit", response_model=AuditListResponse)

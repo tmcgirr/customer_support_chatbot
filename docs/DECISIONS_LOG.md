@@ -360,3 +360,43 @@ Choices made during implementation that the planning docs did not fully specify
   full knowledge file upload/replace/remove + indexing-status polling (only **approve** shipped —
   item 5); privacy-request management view (item 6 → Phase V6). The security-critical core (roles,
   audit, reveal/redeliver/approve) shipped and gates green. 232 backend tests + 31 frontend.
+
+## Phase V6 — Privacy operations: retention, verified deletion, audit
+
+- **2026-07-08 · Two deletion mechanisms with different semantics.** Bulk RETENTION expiry
+  hard-deletes (a daily `retention_sweep` job, bounded per run; aggregates already snapshot
+  the counts so history survives) — periods in `app/core/config.py` are PLACEHOLDERS pending
+  Legal (doc 06 §6). Subject ERASURE (`privacy_delete`) uses a redacting TOMBSTONE (status
+  `deleted`, PII stripped, skeleton + timestamps kept) so the erasure is provable and a
+  delivered request's CRM reference stays known. Conversations are reaped by last_activity and
+  requests by created_at; since last_activity ≥ a request's created_at, a converted conversation
+  always outlives its request — no orphaned request.
+- **2026-07-08 · Conditional TTL for anonymous walk-aways.** `mark_abandoned` stamps
+  `expire_at = last_activity + anonymous period` ONLY on conversations that did not convert to a
+  request (`$$REMOVE` for converted ones, keeping them out of the sparse TTL index); the TTL
+  index auto-purges the rest. Converted conversations live to the long backstop with their request.
+- **2026-07-08 · Deletion is verified, then worker-executed (invariant #13).** Public
+  `POST /api/v1/privacy/requests` is unauthenticated and returns an identical ack to everyone
+  (no existence leak), rate-limited per IP. It only RECORDS a request; an admin verifies identity
+  out of band (audited) and that enqueues the `privacy_delete` job. Nothing deletes inline.
+- **Adversarial-review fixes.** (HIGH) the abandoned-class retention delete reaped
+  request-converted conversations at the 30-day anonymous period, orphaning their 365-day
+  requests — now excluded via `exclude_outcomes=REQUEST_CONVERSION_OUTCOMES`. (HIGH) a
+  subject-supplied `conversation_id` from the unauthenticated endpoint was erased unconditionally,
+  letting a verified requester delete ANOTHER subject's transcript — erasure scope is now bound
+  strictly to conversations of requests bearing the verified email; an unlinked named conversation
+  is left for the operator. (MED) a `privacy_delete` that dead-lettered via lease-expiry
+  (`reclaim_expired`) bypassed the fail hook and stuck the request `open` — `reclaim_expired` now
+  returns the dead-lettered jobs and the worker runs the same dead-letter hook for both routes.
+  (MED) a lost enqueue (crash between verify-commit and enqueue) left a verified erasure with no
+  job — a periodic `privacy_reconcile` re-enqueues verified+open requests with no active job.
+- **Accepted (documented) limitations.** (LOW) a crash in the narrow window between the erasure's
+  redactions and its `mark_completed` may, on the retry, under-report the result counts in the
+  audit record — the data is still fully erased and the request still completes; only the reported
+  count is affected, so no transaction was added. A transcript whose only PII is a free-text email
+  in a message, with no linked request and not named, is not reached by automated erasure (handled
+  by the operator). Access-request fulfillment and a retry action for a `failed` erasure are
+  operator-driven via the audited admin path (no self-service retry endpoint in V1).
+- **Verified:** existence-non-leak, per-IP rate limit, role-gated + audited verify, subject
+  isolation, idempotent replay, no PII in worker logs/audit (counts only) — by tests + review.
+  249 backend tests + 7 admin frontend tests.

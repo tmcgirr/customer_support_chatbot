@@ -14,6 +14,7 @@ from app.api.admin import router as admin_router
 from app.api.public import conversations as public_conversations
 from app.api.public import feedback as public_feedback
 from app.api.public import messages as public_messages
+from app.api.public import privacy as public_privacy
 from app.api.public import requests as public_requests
 from app.core.config import get_settings
 from app.core.db import create_mongo_client, get_database
@@ -26,6 +27,7 @@ from app.domain.feedback.repository import ensure_indexes as ensure_feedback_ind
 from app.domain.jobs.repository import ensure_indexes as ensure_job_indexes
 from app.domain.knowledge.repository import ensure_indexes as ensure_knowledge_indexes
 from app.domain.knowledge.search import KnowledgeSearch
+from app.domain.privacy.repository import ensure_indexes as ensure_privacy_indexes
 from app.domain.ratelimit.repository import ensure_indexes as ensure_ratelimit_indexes
 from app.domain.requests.repository import ensure_indexes as ensure_request_indexes
 
@@ -44,6 +46,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await ensure_ratelimit_indexes(database["rate_limits"])
     await ensure_job_indexes(database["jobs"])
     await ensure_audit_indexes(database["audit"])
+    await ensure_privacy_indexes(database["privacy_requests"])
     app.state.mongo_client = client
     app.state.db = database
     app.state.adapter = OpenAIResponsesAdapter()
@@ -108,6 +111,7 @@ def create_app() -> FastAPI:
     app.include_router(public_messages.router)
     app.include_router(public_requests.router)
     app.include_router(public_feedback.router)
+    app.include_router(public_privacy.router)
     app.include_router(admin_router.router)
     return app
 

@@ -16,8 +16,9 @@ AuditAction = Literal[
     "reveal_conversation",
     "redeliver_request",
     "approve_canonical",
+    "verify_privacy_request",  # V6: admin confirmed a subject's identity
     "export",
-    "delete",
+    "delete",  # V6: subject erasure executed (also used for content deletion)
 ]
 
 

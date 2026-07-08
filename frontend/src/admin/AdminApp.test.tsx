@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import AdminApp from "./AdminApp";
@@ -14,10 +14,12 @@ const listRequests = vi.fn();
 const listUnresolved = vi.fn();
 const listCanonical = vi.fn();
 const listAudit = vi.fn();
+const listPrivacyRequests = vi.fn();
 const revealRequest = vi.fn();
 const revealConversation = vi.fn();
 const redeliver = vi.fn();
 const approveCanonical = vi.fn();
+const verifyPrivacyRequest = vi.fn();
 
 vi.mock("./api", () => ({
   createAdminClient: () => ({
@@ -29,10 +31,12 @@ vi.mock("./api", () => ({
     listUnresolved,
     listCanonical,
     listAudit,
+    listPrivacyRequests,
     revealRequest,
     revealConversation,
     redeliver,
     approveCanonical,
+    verifyPrivacyRequest,
   }),
   AdminAuthError: class AdminAuthError extends Error {},
   AdminForbiddenError: class AdminForbiddenError extends Error {},
@@ -72,6 +76,18 @@ const DRAFT_ANSWER = {
   review_date: "2026-08-01",
 };
 
+const PENDING_PRIVACY = {
+  request_id: "prv_1",
+  type: "deletion",
+  requester_email: "j***@e***.com",
+  conversation_id: "cnv_1",
+  verification_status: "pending",
+  status: "open",
+  result_counts: { conversations: 3, requests: 2, feedback: 1 },
+  created_at: "2026-07-01",
+  completed_at: null,
+};
+
 function signIn() {
   fireEvent.change(screen.getByLabelText("Username"), { target: { value: "admin" } });
   fireEvent.change(screen.getByLabelText("Password"), { target: { value: "secret" } });
@@ -87,6 +103,8 @@ beforeEach(() => {
   listUnresolved.mockResolvedValue({ questions: [] });
   listCanonical.mockResolvedValue({ answers: [DRAFT_ANSWER] });
   listAudit.mockResolvedValue({ entries: [] });
+  listPrivacyRequests.mockResolvedValue({ requests: [PENDING_PRIVACY] });
+  verifyPrivacyRequest.mockResolvedValue({ ok: true, detail: "verified" });
   revealRequest.mockResolvedValue({
     request_id: "req_1",
     contact: { name: "Jane Doe", email: "jane@example.com", company: "Acme" },
@@ -172,5 +190,36 @@ describe("AdminApp", () => {
     // Knowledge: admin sees Approve on a draft answer.
     fireEvent.click(screen.getByRole("button", { name: "Knowledge" }));
     expect(await screen.findByRole("button", { name: "Approve" })).toBeInTheDocument();
+  });
+
+  it("shows the privacy table to a viewer but hides the Verify button on a pending row", async () => {
+    getMe.mockResolvedValue({ username: "vera", role: "viewer" });
+    render(<AdminApp />);
+    signIn();
+
+    await screen.findByText("vera (viewer)");
+
+    fireEvent.click(screen.getByRole("button", { name: "Privacy" }));
+    // Pending request data is visible (type + summarized result counts)…
+    expect(await screen.findByText("deletion")).toBeInTheDocument();
+    expect(screen.getByText("3 conversations, 2 requests, 1 feedback")).toBeInTheDocument();
+    // …but a viewer gets no Verify button.
+    expect(screen.queryByRole("button", { name: "Verify" })).not.toBeInTheDocument();
+  });
+
+  it("lets an admin verify a pending privacy request with an audited reason", async () => {
+    render(<AdminApp />);
+    signIn();
+    await screen.findByText("admin (admin)");
+
+    fireEvent.click(screen.getByRole("button", { name: "Privacy" }));
+
+    // Admin sees Verify on the pending row; clicking prompts for a reason and
+    // calls verifyPrivacyRequest(request_id, reason).
+    const verifyButton = await screen.findByRole("button", { name: "Verify" });
+    fireEvent.click(verifyButton);
+    await waitFor(() =>
+      expect(verifyPrivacyRequest).toHaveBeenCalledWith("prv_1", "audit reason"),
+    );
   });
 });

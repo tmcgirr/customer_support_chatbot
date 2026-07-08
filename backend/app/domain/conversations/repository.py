@@ -21,6 +21,15 @@ Collection = AsyncIOMotorCollection[dict[str, Any]]
 
 BeginTurnOutcome = Literal["STARTED", "DUPLICATE", "BUSY", "CAP_REACHED", "NOT_FOUND"]
 
+# Outcomes that mean a PII-bearing request was created from the conversation. Such
+# conversations are NOT given an anonymous-retention TTL (they live with their
+# request's lifecycle); only truly anonymous walk-aways auto-expire.
+REQUEST_CONVERSION_OUTCOMES = (
+    "strategy_call_requested",
+    "support_request_created",
+    "human_escalation_created",
+)
+
 
 @dataclass(frozen=True)
 class BeginTurnResult:
@@ -53,6 +62,12 @@ async def ensure_indexes(collection: Collection) -> None:
     )
     await collection.create_index(
         [("messages.client_message_id", ASCENDING)], name="cmid", sparse=True
+    )
+    # Conditional TTL: only docs with an ``expire_at`` (set on anonymous abandoned
+    # conversations by mark_abandoned) are auto-purged; all others have no expire_at
+    # and are never touched by the TTL monitor (contracts §8, V6 retention).
+    await collection.create_index(
+        [("expire_at", ASCENDING)], name="anonymous_ttl", expireAfterSeconds=0, sparse=True
     )
 
 
@@ -219,13 +234,93 @@ class ConversationRepository:
         )
         return result.modified_count > 0
 
-    async def mark_abandoned(self, inactive_before: datetime) -> int:
+    async def mark_abandoned(self, inactive_before: datetime, *, anonymous_ttl_seconds: int) -> int:
         """Mark still-active conversations with no activity since ``inactive_before``
         as abandoned (feeds outcome metrics). Distinct from retention deletion (V6).
+
+        For truly ANONYMOUS abandoned conversations (no request was created), also
+        stamp ``expire_at = last_activity_at + anonymous_ttl_seconds`` so the TTL
+        index auto-purges them per approved retention (contracts §8). Conversations
+        that converted to a request get no TTL — they live with their request.
         Returns the count updated."""
+        ttl_ms = anonymous_ttl_seconds * 1000
         result = await self._collection.update_many(
             {"status": "active", "last_activity_at": {"$lt": inactive_before}},
-            {"$set": {"status": "abandoned"}},
+            [
+                {
+                    "$set": {
+                        "status": "abandoned",
+                        # Converted conversations get NO expire_at ($$REMOVE omits the
+                        # field entirely, so they stay out of the sparse TTL index);
+                        # anonymous walk-aways expire at last_activity + the TTL.
+                        "expire_at": {
+                            "$cond": [
+                                {"$in": ["$outcome", list(REQUEST_CONVERSION_OUTCOMES)]},
+                                "$$REMOVE",
+                                {"$add": ["$last_activity_at", ttl_ms]},
+                            ]
+                        },
+                    }
+                }
+            ],
+        )
+        return int(result.modified_count)
+
+    # --- Retention & deletion (V6) ---
+
+    async def delete_before(
+        self,
+        cutoff: datetime,
+        *,
+        limit: int,
+        statuses: list[str] | None = None,
+        exclude_outcomes: list[str] | None = None,
+    ) -> int:
+        """Retention: hard-delete conversations with no activity since ``cutoff``
+        (optionally only those in ``statuses``, and never those whose ``outcome`` is
+        in ``exclude_outcomes``). Bounded by ``limit`` per run so a sweep never takes
+        an unbounded delete lock. Aggregates already snapshot the counts, so history
+        isn't lost.
+
+        ``exclude_outcomes`` guards the short abandoned-retention class from reaping a
+        conversation that CONVERTED to a request — those must live to the long backstop
+        alongside their request, never be deleted at the 30-day anonymous period."""
+        query: dict[str, Any] = {"last_activity_at": {"$lt": cutoff}}
+        if statuses is not None:
+            query["status"] = {"$in": statuses}
+        if exclude_outcomes:
+            query["outcome"] = {"$nin": exclude_outcomes}
+        ids_to_drop = [
+            doc["_id"]
+            for doc in await self._collection.find(query, {"_id": 1})
+            .limit(limit)
+            .to_list(length=limit)
+        ]
+        if not ids_to_drop:
+            return 0
+        result = await self._collection.delete_many({"_id": {"$in": ids_to_drop}})
+        return int(result.deleted_count)
+
+    async def redact_for_deletion(self, conversation_ids: list[str]) -> int:
+        """Subject erasure (privacy_delete job): turn matched conversations into a
+        redacting tombstone — status ``deleted``, PII-bearing fields cleared — while
+        keeping the _id, timestamps, and non-PII outcome so the erasure is provable
+        and metrics stay consistent. Idempotent: an already-``deleted`` doc is skipped."""
+        if not conversation_ids:
+            return 0
+        result = await self._collection.update_many(
+            {"_id": {"$in": conversation_ids}, "status": {"$ne": "deleted"}},
+            {
+                "$set": {
+                    "status": "deleted",
+                    "deletion_status": "deleted",
+                    "messages": [],
+                    "unsupported_questions": [],
+                    "entry_page": None,
+                    "locale": None,
+                    "active_run": None,
+                }
+            },
         )
         return int(result.modified_count)
 

@@ -16,6 +16,7 @@ from app.domain.conversations.repository import ConversationRepository
 from app.domain.feedback.repository import FeedbackRepository
 from app.domain.jobs.repository import JobRepository
 from app.domain.knowledge.search import KnowledgeSearch
+from app.domain.privacy.repository import PrivacyRequestRepository
 from app.domain.ratelimit.repository import RateLimitRepository
 from app.domain.requests.repository import RequestRepository
 from app.domain.requests.service import RequestService
@@ -48,6 +49,10 @@ def get_audit_repository(request: Request) -> AuditRepository:
     return AuditRepository(request.app.state.db["audit"])
 
 
+def get_privacy_repository(request: Request) -> PrivacyRequestRepository:
+    return PrivacyRequestRepository(request.app.state.db["privacy_requests"])
+
+
 def get_feedback_repository(request: Request) -> FeedbackRepository:
     return FeedbackRepository(request.app.state.db["feedback"])
 
@@ -64,6 +69,7 @@ RepoDep = Annotated[ConversationRepository, Depends(get_conversation_repository)
 RateLimiterDep = Annotated[RateLimitRepository, Depends(get_rate_limiter)]
 JobRepoDep = Annotated[JobRepository, Depends(get_job_repository)]
 AuditRepoDep = Annotated[AuditRepository, Depends(get_audit_repository)]
+PrivacyRepoDep = Annotated[PrivacyRequestRepository, Depends(get_privacy_repository)]
 CanonicalRepoDep = Annotated[CanonicalAnswerRepository, Depends(get_canonical_repository)]
 RequestRepoDep = Annotated[RequestRepository, Depends(get_request_repository)]
 FeedbackRepoDep = Annotated[FeedbackRepository, Depends(get_feedback_repository)]

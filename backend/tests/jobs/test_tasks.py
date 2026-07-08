@@ -41,16 +41,23 @@ async def test_abandonment_sweep_marks_inactive_conversations(db: Database) -> N
     await db["conversations"].update_one(
         {"_id": convo.id}, {"$set": {"last_activity_at": datetime.now(UTC) - timedelta(days=2)}}
     )
-    marked = await run_abandonment_sweep(repo, abandon_seconds=86_400)
+    marked = await run_abandonment_sweep(
+        repo, abandon_seconds=86_400, anonymous_ttl_seconds=30 * 86_400
+    )
     assert marked == 1
     doc = await db["conversations"].find_one({"_id": convo.id})
     assert doc is not None and doc["status"] == "abandoned"
+    # An anonymous walk-away (no request outcome) gets the retention TTL stamp.
+    assert doc.get("expire_at") is not None
 
 
 async def test_abandonment_sweep_leaves_recent_active(db: Database) -> None:
     repo = ConversationRepository(db["conversations"])
     convo = await repo.create()  # last_activity_at = now
-    assert await run_abandonment_sweep(repo, abandon_seconds=86_400) == 0
+    assert (
+        await run_abandonment_sweep(repo, abandon_seconds=86_400, anonymous_ttl_seconds=30 * 86_400)
+        == 0
+    )
     doc = await db["conversations"].find_one({"_id": convo.id})
     assert doc is not None and doc["status"] == "active"
 

@@ -11,10 +11,18 @@ import Audit from "./Audit";
 import Conversations from "./Conversations";
 import Dashboard from "./Dashboard";
 import Knowledge from "./Knowledge";
+import Privacy from "./Privacy";
 import Requests from "./Requests";
 import Unresolved from "./Unresolved";
 
-type Tab = "dashboard" | "conversations" | "requests" | "knowledge" | "unresolved" | "audit";
+type Tab =
+  | "dashboard"
+  | "conversations"
+  | "requests"
+  | "knowledge"
+  | "unresolved"
+  | "audit"
+  | "privacy";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "dashboard", label: "Dashboard" },
@@ -23,6 +31,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "knowledge", label: "Knowledge" },
   { id: "unresolved", label: "Unresolved" },
   { id: "audit", label: "Audit" },
+  { id: "privacy", label: "Privacy" },
 ];
 
 function Login({ onAuthenticate }: { onAuthenticate: (creds: AdminCreds) => Promise<void> }) {
@@ -141,6 +150,9 @@ function Shell({
           <Unresolved key={viewKey} client={client} onAuthError={onSignOut} />
         )}
         {tab === "audit" && <Audit key={viewKey} client={client} onAuthError={onSignOut} />}
+        {tab === "privacy" && (
+          <Privacy key={viewKey} client={client} role={role} onAuthError={onSignOut} />
+        )}
       </main>
     </div>
   );

@@ -16,7 +16,9 @@ from pydantic import BaseModel, ConfigDict, Field
 JobType = Literal[
     "deliver_request",  # V4: deliver a request to CRM/ticketing
     "poll_indexing",  # V5: poll a knowledge file's indexing status
-    "retention_sweep",  # V6: delete data past its retention class
+    "retention_sweep",  # V6: periodic — delete data past its retention class
+    "privacy_delete",  # V6: on-demand — execute a verified subject-erasure request
+    "privacy_reconcile",  # V6: periodic — re-enqueue verified erasures whose job was lost
     "daily_aggregates",  # periodic: snapshot conversation/request/feedback counts
     "knowledge_review_reminder",  # periodic: flag knowledge sources past review_date
     "stale_lock_sweep",  # periodic: release leaked conversation run-locks

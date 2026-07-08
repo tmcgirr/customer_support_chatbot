@@ -80,6 +80,10 @@ class Settings(BaseSettings):
     # Per-IP conversation-creation cap over a fixed rolling window (contracts §3.1).
     ip_create_cap: int = 10
     ip_create_window_seconds: int = 3600
+    # Per-IP cap on public privacy-request submissions (V6) — tighter, to blunt
+    # enumeration/abuse of the unauthenticated endpoint.
+    privacy_request_ip_cap: int = 5
+    privacy_request_ip_window_seconds: int = 3600
     # A run lock older than this is treated as leaked (crashed mid-turn) and may be
     # released opportunistically so a conversation can't brick at CONVERSATION_BUSY.
     # A LIVE turn heartbeats its lock (~ every lock_stale_seconds/3) so however slow
@@ -97,6 +101,27 @@ class Settings(BaseSettings):
     # A request still received/delivering this long after creation is reconciled by
     # the delivery sweep (its job crashed/timed-out, or its enqueue was lost).
     delivery_stuck_seconds: int = 900
+
+    # --- Data retention (V6). PLACEHOLDER periods pending Legal/Privacy sign-off
+    # (doc 06 §6); documented in docs/PRIVACY_NOTICE.md, which MUST match these.
+    # The retention_sweep job hard-deletes past-period data (aggregates already
+    # snapshot the counts, so history isn't lost); the values are days. ---
+    retention_sweep_seconds: int = 86_400  # run the retention sweep daily
+    # Abandoned/anonymous conversations (visitor walked away, no request submitted).
+    retention_abandoned_conversation_days: int = 30
+    # Any conversation, hard backstop (converted ones live at least this long).
+    retention_conversation_days: int = 365
+    # Request records carry contact PII — retained for the engagement window.
+    retention_request_days: int = 365
+    retention_feedback_days: int = 365
+    retention_privacy_request_days: int = 730  # keep erasure PROOF longer than the data
+    retention_sweep_batch: int = 500  # max docs deleted per collection per sweep run
+
+    # --- Consent / disclosure versions (V6). The current versions the widget and
+    # request form must send; recorded on conversations/requests. Bump on any
+    # material change to the notice; keep in lockstep with docs/PRIVACY_NOTICE.md. ---
+    chat_disclosure_version: str = "privacy-2026-07"
+    contact_consent_version: str = "consent-2026-07"
 
     # --- Admin (Phase 7; V1 adds an optional read-only viewer role) ---
     admin_username: str = "admin"

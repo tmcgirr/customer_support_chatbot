@@ -70,7 +70,8 @@ async def test_reclaim_expired_lease_returns_job_to_pending(db: Database) -> Non
             }
         },
     )
-    assert await repo.reclaim_expired() == 1
+    # Not budget-exhausted → returned to pending, not dead-lettered (empty return).
+    assert await repo.reclaim_expired() == []
     reclaimed = await repo.claim("w", lease_seconds=60)
     assert reclaimed is not None and reclaimed.id == job.id
 
@@ -127,7 +128,9 @@ async def test_reclaim_dead_letters_budget_exhausted_crash_loop(db: Database) ->
             }
         },
     )
-    await repo.reclaim_expired()
+    dead = await repo.reclaim_expired()
+    # Returned so the worker can run its dead-letter hook (park request / fail erasure).
+    assert [j.id for j in dead] == [job.id]
     doc = await db["jobs"].find_one({"_id": job.id})
     assert doc is not None and doc["status"] == "dead_letter"
     assert doc["last_error"] == "lease_expired"

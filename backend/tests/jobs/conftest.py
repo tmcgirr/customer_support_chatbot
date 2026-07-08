@@ -8,7 +8,16 @@ from app.core.config import get_settings
 from app.domain.jobs.repository import ensure_indexes as ensure_job_indexes
 
 TEST_DB_NAME = "cadre_chatbot_test"
-_COLLECTIONS = ("jobs", "conversations", "knowledge_sources", "requests", "feedback", "aggregates")
+_COLLECTIONS = (
+    "jobs",
+    "conversations",
+    "knowledge_sources",
+    "requests",
+    "feedback",
+    "aggregates",
+    "privacy_requests",
+    "audit",
+)
 
 Database = AsyncIOMotorDatabase[dict[str, Any]]
 

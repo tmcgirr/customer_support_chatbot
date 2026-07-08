@@ -14,6 +14,7 @@ from app.api.deps import (
     get_feedback_repository,
     get_job_repository,
     get_knowledge_search,
+    get_privacy_repository,
     get_rate_limiter,
     get_request_repository,
 )
@@ -27,6 +28,8 @@ from app.domain.feedback.repository import FeedbackRepository
 from app.domain.feedback.repository import ensure_indexes as ensure_feedback
 from app.domain.jobs.repository import JobRepository
 from app.domain.jobs.repository import ensure_indexes as ensure_jobs
+from app.domain.privacy.repository import PrivacyRequestRepository
+from app.domain.privacy.repository import ensure_indexes as ensure_privacy
 from app.domain.ratelimit.repository import RateLimitRepository
 from app.domain.requests.repository import RequestRepository
 from app.domain.requests.repository import ensure_indexes as ensure_requests
@@ -102,6 +105,13 @@ async def audit_collection() -> AsyncIterator[Collection]:
 
 
 @pytest.fixture
+async def privacy_collection() -> AsyncIterator[Collection]:
+    async for coll in _fresh_collection("privacy_requests"):
+        await ensure_privacy(coll)
+        yield coll
+
+
+@pytest.fixture
 def fake_adapter() -> FakeAdapter:
     return FakeAdapter.replying(DEFAULT_REPLY)
 
@@ -120,6 +130,7 @@ async def client(
     ratelimit_collection: Collection,
     jobs_collection: Collection,
     audit_collection: Collection,
+    privacy_collection: Collection,
     fake_adapter: FakeAdapter,
     fake_knowledge: FakeKnowledgeSearch,
 ) -> AsyncIterator[httpx.AsyncClient]:
@@ -130,6 +141,7 @@ async def client(
     rate_limiter = RateLimitRepository(ratelimit_collection, secret="test-secret")
     job_repo = JobRepository(jobs_collection)
     audit_repo = AuditRepository(audit_collection)
+    privacy_repo = PrivacyRequestRepository(privacy_collection)
     app.dependency_overrides[get_conversation_repository] = lambda: conversation_repo
     app.dependency_overrides[get_canonical_repository] = lambda: canonical_repo
     app.dependency_overrides[get_request_repository] = lambda: request_repo
@@ -137,6 +149,7 @@ async def client(
     app.dependency_overrides[get_rate_limiter] = lambda: rate_limiter
     app.dependency_overrides[get_job_repository] = lambda: job_repo
     app.dependency_overrides[get_audit_repository] = lambda: audit_repo
+    app.dependency_overrides[get_privacy_repository] = lambda: privacy_repo
     app.dependency_overrides[get_adapter] = lambda: fake_adapter
     app.dependency_overrides[get_knowledge_search] = lambda: fake_knowledge
     transport = ASGITransport(app=app)

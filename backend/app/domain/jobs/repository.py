@@ -171,34 +171,42 @@ class JobRepository:
         )
         return "pending" if result.modified_count else None
 
-    async def reclaim_expired(self) -> int:
+    async def reclaim_expired(self) -> list[Job]:
         """Recover jobs whose lease expired (worker hard-crashed mid-run). Ones that
         have already spent their attempt budget dead-letter (poison-pill guard — they
         crashed the worker before fail() could run); the rest go back to pending.
-        Returns the count returned to pending."""
+
+        Returns the jobs that were dead-lettered here, so the caller can run their
+        type-specific reconciliation hook (e.g. park a request / fail an erasure) —
+        this route bypasses fail(), so without it a resource would be stuck silently."""
         now = _now()
-        # Budget-exhausted crash loops → dead-letter instead of looping forever.
+        expired = {"status": "running", "lock_expires_at": {"$lt": now}}
+        # Snapshot the budget-exhausted expired jobs BEFORE mutating so we can return
+        # them for hook processing (the update strips the fields we'd match on).
+        dead_docs = await self._collection.find(
+            {**expired, "$expr": {"$gte": ["$attempts", "$max_attempts"]}}
+        ).to_list(length=None)
+        dead_jobs = [Job.model_validate(d) for d in dead_docs]
+        if dead_jobs:
+            # Budget-exhausted crash loops → dead-letter instead of looping forever.
+            await self._collection.update_many(
+                {"_id": {"$in": [j.id for j in dead_jobs]}, **expired},
+                {
+                    "$set": {
+                        "status": "dead_letter",
+                        "last_error": "lease_expired",
+                        "terminal_at": now,
+                        "lock_owner": None,
+                        "lock_expires_at": None,
+                    }
+                },
+            )
+        # The rest of the expired-lease jobs go back to pending for another attempt.
         await self._collection.update_many(
-            {
-                "status": "running",
-                "lock_expires_at": {"$lt": now},
-                "$expr": {"$gte": ["$attempts", "$max_attempts"]},
-            },
-            {
-                "$set": {
-                    "status": "dead_letter",
-                    "last_error": "lease_expired",
-                    "terminal_at": now,
-                    "lock_owner": None,
-                    "lock_expires_at": None,
-                }
-            },
-        )
-        result = await self._collection.update_many(
-            {"status": "running", "lock_expires_at": {"$lt": now}},
+            expired,
             {"$set": {"status": "pending", "lock_owner": None, "lock_expires_at": None}},
         )
-        return int(result.modified_count)
+        return dead_jobs
 
     async def counts(self) -> dict[str, int]:
         """Status → count, for monitoring (queue depth, dead-letter count)."""
