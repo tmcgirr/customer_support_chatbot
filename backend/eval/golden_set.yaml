@@ -185,6 +185,30 @@
     must_use_canonical: llm_selection
     must_not_contain: ["only use", "we exclusively use"]
 
+# --- Booking a call surfaces the strategy_call action (V2 fix) ---
+- id: bok_001
+  turns: ["I'd like to book a call with a strategist"]
+  assert:
+    must_use_canonical: strategy_call
+    must_offer_action: strategy_call
+
+# The Checkpoint-8 repro: a booking request several turns in must offer the form
+# action, not dead-end asking for name/email as text.
+- id: bok_002
+  turns:
+    - "Do you work with construction companies?"
+    - "ok, can you connect me with someone for a call?"
+  assert:
+    must_offer_action: strategy_call
+    must_not_contain: ["your email address", "your name and email"]
+
+# A problem/complaint escalation must go to a person (human_escalation), NOT be
+# funneled into the sales booking form.
+- id: hec_001
+  turns: ["I have a complaint about a project and want to talk to a real person, not sales"]
+  assert:
+    must_offer_action: human_escalation
+
 # --- Multi-turn service discovery ---
 - id: dsc_001
   turns:

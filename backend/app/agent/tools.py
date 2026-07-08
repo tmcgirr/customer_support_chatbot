@@ -57,7 +57,9 @@ GET_CANONICAL_ANSWER = ToolSpec(
                 "description": (
                     "One of: pricing, data_security, ai_maturity_index, portal_access, "
                     "company_overview, service_overview, industry_fit, llm_selection, "
-                    "case_study, unsupported."
+                    "case_study, strategy_call, unsupported. Use 'strategy_call' when the "
+                    "visitor wants to book/schedule a call or be connected with a strategist "
+                    "or sales."
                 ),
             }
         },

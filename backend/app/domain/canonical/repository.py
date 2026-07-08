@@ -45,13 +45,26 @@ class CanonicalAnswerRepository:
         """
         doc = answer.model_dump(by_alias=True)
         doc_id = doc.pop("_id")
+        # `status` is set ONCE on insert and thereafter only changed via approve():
+        # re-seeding content (even with --status draft) never downgrades an already
+        # approved answer, so a re-seed can't silently disable the served baseline.
+        status = doc.pop("status")
         result = await self._collection.find_one_and_update(
             {"intent": answer.intent},
-            {"$set": doc, "$setOnInsert": {"_id": doc_id}},
+            {"$set": doc, "$setOnInsert": {"_id": doc_id, "status": status}},
             upsert=True,
             return_document=ReturnDocument.AFTER,
         )
         return CanonicalAnswer.model_validate(result)
+
+    async def approve(self, intent: str) -> bool:
+        """Promote the draft canonical answer for ``intent`` to approved (the admin
+        approval action, contracts §4). Returns whether a draft was promoted."""
+        result = await self._collection.update_one(
+            {"intent": intent, "status": "draft"},
+            {"$set": {"status": "approved"}},
+        )
+        return result.modified_count > 0
 
     async def list_answers(self) -> list[CanonicalAnswer]:
         docs = await self._collection.find({}).to_list(length=None)

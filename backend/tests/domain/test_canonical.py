@@ -108,6 +108,71 @@ async def test_draft_records_do_not_match(repo: CanonicalAnswerRepository) -> No
     assert match.matched is False
 
 
+async def test_booking_intent_offers_strategy_call_action(
+    seeded_repo: CanonicalAnswerRepository,
+) -> None:
+    # The booking fix: a canonical answer for the strategy_call intent carries the
+    # strategy_call action, so a mid-conversation booking reply surfaces the form.
+    match = await seeded_repo.get_canonical_answer("strategy_call")
+    assert match.matched is True
+    assert match.allowed_action_ids == ["strategy_call"]
+
+
+async def test_approve_promotes_draft_to_served(repo: CanonicalAnswerRepository) -> None:
+    now = datetime.now(UTC)
+    await repo.upsert(
+        CanonicalAnswer(
+            id="can_draft_x",
+            name="Draft",
+            intent="pricing",
+            content="new draft wording",
+            status="draft",
+            owner="Sales",
+            effective_date=now,
+            review_date=now,
+        )
+    )
+    assert (await repo.get_canonical_answer("pricing")).matched is False  # draft not served
+    assert await repo.approve("pricing") is True  # promote
+    assert (await repo.get_canonical_answer("pricing")).matched is True  # now served
+    assert await repo.approve("pricing") is False  # nothing left in draft
+
+
+async def test_reseeding_does_not_downgrade_approved(repo: CanonicalAnswerRepository) -> None:
+    # H1 guard: `seed --status draft` (or any re-upsert) must update content but
+    # NEVER flip an approved answer back to draft — status is set once on insert.
+    now = datetime.now(UTC)
+    await repo.upsert(
+        CanonicalAnswer(
+            id="can_a",
+            name="X",
+            intent="pricing",
+            content="approved v1",
+            status="approved",
+            owner="o",
+            effective_date=now,
+            review_date=now,
+        )
+    )
+    assert (await repo.get_canonical_answer("pricing")).matched is True
+    # Re-upsert the same intent as draft with edited content.
+    await repo.upsert(
+        CanonicalAnswer(
+            id="can_b",
+            name="X",
+            intent="pricing",
+            content="edited v2",
+            status="draft",
+            owner="o",
+            effective_date=now,
+            review_date=now,
+        )
+    )
+    match = await repo.get_canonical_answer("pricing")
+    assert match.matched is True  # still served — not downgraded
+    assert match.content == "edited v2"  # but content did update
+
+
 async def test_upsert_is_idempotent_by_intent(repo: CanonicalAnswerRepository) -> None:
     """Re-seeding the same intent updates in place and keeps a stable _id."""
     answers = build_answers(datetime.now(UTC))

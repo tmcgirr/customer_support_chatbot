@@ -81,6 +81,51 @@ async def test_canonical_tool_sets_answer_id_and_actions(
     assert assistant["suggested_action_ids"] == ["strategy_call"]
 
 
+async def test_booking_intent_attaches_strategy_call_action_midconversation(
+    client: httpx.AsyncClient,
+    collection: Collection,
+    canonical_collection: Collection,
+    fake_adapter: FakeAdapter,
+) -> None:
+    # The V2 booking fix: a mid-conversation booking request routes to the
+    # strategy_call canonical, which carries the strategy_call action → the widget
+    # surfaces the form chip (instead of the bot asking for name/email as text).
+    now = datetime.now(UTC)
+    await CanonicalAnswerRepository(canonical_collection).upsert(
+        CanonicalAnswer(
+            id="can_booking_test",
+            name="Book a strategy call",
+            intent="strategy_call",
+            content="Happy to connect you with a strategist — use the option below.",
+            allowed_action_ids=["strategy_call"],
+            status="approved",
+            owner="Sales",
+            effective_date=now,
+            review_date=now,
+        )
+    )
+    fake_adapter.set_rounds(
+        [
+            [
+                ToolCall(
+                    call_id="c1",
+                    name="get_canonical_answer",
+                    arguments={"intent": "strategy_call"},
+                ),
+                _completed(),
+            ],
+            [TextDelta(text="Happy to connect you — use the option below."), _completed()],
+        ]
+    )
+
+    cid, token = await _create(client)
+    events = await _send_sse(client, cid, token, "ok can you connect me for a call?", "cmid_book")
+
+    assert events[-1]["event"] == "response.completed"
+    action_ids = [a["id"] for a in events[-1]["data"]["suggested_actions"]]
+    assert "strategy_call" in action_ids  # the form chip surfaces mid-conversation
+
+
 async def test_search_tool_stores_sources(
     client: httpx.AsyncClient,
     collection: Collection,

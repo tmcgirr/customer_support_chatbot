@@ -264,3 +264,26 @@ Choices made during implementation that the planning docs did not fully specify
   `OPENAI_VECTOR_STORE_ID`. Promotion = re-upload approved content to the prod project's store; never
   edit prod content in place. The golden gate (CI `golden-eval` job, its `OPENAI_VECTOR_STORE_ID`
   secret pointed at the target store) must pass on the target config before promotion.
+
+## Phase V2 — content lifecycle & mid-conversation booking
+
+- **2026-07-08 · Mid-conversation booking fix (top V1 item).** A booking request now routes to a
+  canonical answer for the `strategy_call` intent whose `allowed_action_ids` includes `strategy_call`,
+  so the reply carries the booking chip → the widget opens the strategy-call form (the SAME
+  `handleSelectAction` handles welcome chips and mid-conversation actions — no frontend change). No new
+  tool (invariant #2). The prompt routes "book / schedule / connect with a strategist or sales" to
+  `strategy_call` and explicitly says NOT to collect name/email/phone in chat. Real gate: `bok_001`,
+  `bok_002` (the multi-turn Checkpoint-8 repro) pass.
+- **2026-07-08 · Canonical `status` is set ONCE on insert; only `approve()` transitions it.** `upsert`
+  `$setOnInsert`s status, so re-seeding content (even `seed_canonical.py --status draft`) never
+  downgrades an approved answer — closing the review's HIGH where `--status draft` would have
+  mass-downgraded the whole baseline and silently disabled every canonical answer.
+- **2026-07-08 · Draft→approved lifecycle has an operator path now.** `seed_canonical.py --status draft`
+  stages content; `scripts/approve_canonical.py --intent X` promotes it (wires `repo.approve`). The
+  admin approval UI is still Phase V5; the CLI keeps the draft flow from being a dead-end.
+- **2026-07-08 · Sales booking vs support escalation are distinguished in the prompt.** "Book / connect
+  with a strategist or sales" → `strategy_call`; a "problem / complaint / account issue with a person"
+  → the escalation path (`human_escalation`), so a support-seeker isn't funneled into the sales form.
+  Guarded by new golden case `hec_001`. Real gate after V2: **35/35**.
+- **Deploy note:** a deployment must re-run `seed_canonical.py` after V2 or `get_canonical_answer(strategy_call)`
+  returns unmatched and the booking dead-end returns (only `bok_001` catches it). Reseed on every content change.

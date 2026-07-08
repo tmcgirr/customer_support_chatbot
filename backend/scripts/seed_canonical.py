@@ -10,6 +10,7 @@ invent prices, client names, certifications, or AI Maturity methodology
     uv run python scripts/seed_canonical.py
 """
 
+import argparse
 import asyncio
 import sys
 from datetime import UTC, datetime, timedelta
@@ -24,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.core import ids  # noqa: E402
 from app.core.config import get_settings  # noqa: E402
-from app.domain.canonical.models import CanonicalAnswer  # noqa: E402
+from app.domain.canonical.models import CanonicalAnswer, CanonicalStatus  # noqa: E402
 from app.domain.canonical.repository import (  # noqa: E402
     CanonicalAnswerRepository,
     ensure_indexes,
@@ -173,6 +174,19 @@ SEED_ANSWERS: list[dict[str, Any]] = [
         "mandatory_escalation": False,
     },
     {
+        "name": "Book a strategy call",
+        "intent": "strategy_call",
+        "owner": "Sales",
+        "content": (
+            "I'd be glad to connect you with a Cadre strategist. Use the option "
+            "below to share your name, email, and what you'd like to discuss, and "
+            "I'll route your request to the team. I can't schedule a specific time "
+            "or promise a response window from here."
+        ),
+        "allowed_action_ids": ["strategy_call"],
+        "mandatory_escalation": False,
+    },
+    {
         "name": "Unsupported question",
         "intent": "unsupported",
         "owner": "Product + Engineering",
@@ -187,8 +201,11 @@ SEED_ANSWERS: list[dict[str, Any]] = [
 ]
 
 
-def build_answers(now: datetime) -> list[CanonicalAnswer]:
-    """Materialize the seed dicts into approved ``CanonicalAnswer`` records."""
+def build_answers(now: datetime, status: CanonicalStatus = "approved") -> list[CanonicalAnswer]:
+    """Materialize the seed dicts into ``CanonicalAnswer`` records.
+
+    ``status`` defaults to ``approved`` (the approved baseline). Pass ``draft`` to
+    stage content pending an admin approval (draft records are never served)."""
     review = now + timedelta(days=180)
     return [
         CanonicalAnswer(
@@ -200,7 +217,7 @@ def build_answers(now: datetime) -> list[CanonicalAnswer]:
             disclaimer=entry.get("disclaimer"),
             allowed_action_ids=entry.get("allowed_action_ids", []),
             mandatory_escalation=entry.get("mandatory_escalation", False),
-            status="approved",
+            status=status,
             version=1,
             owner=entry["owner"],
             effective_date=now,
@@ -210,7 +227,7 @@ def build_answers(now: datetime) -> list[CanonicalAnswer]:
     ]
 
 
-async def seed() -> int:
+async def seed(status: CanonicalStatus = "approved") -> int:
     """Upsert every canonical answer; return the number seeded."""
     client: AsyncIOMotorClient[dict[str, Any]] = AsyncIOMotorClient(
         get_settings().mongo_uri.get_secret_value(), tz_aware=True
@@ -219,7 +236,7 @@ async def seed() -> int:
         collection = client[get_settings().mongo_db_name]["canonical_answers"]
         await ensure_indexes(collection)
         repository = CanonicalAnswerRepository(collection)
-        answers = build_answers(datetime.now(UTC))
+        answers = build_answers(datetime.now(UTC), status)
         for answer in answers:
             await repository.upsert(answer)
         return len(answers)
@@ -228,8 +245,16 @@ async def seed() -> int:
 
 
 def main() -> None:
-    count = asyncio.run(seed())
-    print(f"Seeded {count} canonical answers.")
+    parser = argparse.ArgumentParser(description="Seed canonical answers.")
+    parser.add_argument(
+        "--status",
+        choices=["approved", "draft"],
+        default="approved",
+        help="Write records as approved (default, served) or draft (staged, not served).",
+    )
+    args = parser.parse_args()
+    count = asyncio.run(seed(args.status))
+    print(f"Seeded {count} canonical answers as {args.status}.")
 
 
 if __name__ == "__main__":
