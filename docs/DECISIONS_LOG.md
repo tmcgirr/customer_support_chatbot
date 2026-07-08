@@ -335,3 +335,28 @@ Choices made during implementation that the planning docs did not fully specify
   best-effort secondary guard against replica lag).
 - **Verified:** exactly-once claim, enqueue-once, probe-before-retry, provider isolation, PII/#6 all
   confirmed by the reviewer. 216 backend tests.
+
+## Phase V5 — Admin V1: roles, audit, delivery ops
+
+- **2026-07-08 · Roles are always enforced; the viewer is gated by `VIEWER_PASSWORD`, not a
+  feature flag.** `admin`/`viewer` sit behind an IdP-replaceable dev-stub Basic auth
+  (`AdminPrincipal`). Read routes use `AdminDep` (either role); reveal/redeliver/approve use
+  `AdminRoleDep` (admin only) → a viewer is authenticated then **403**, never 401/200. Dropped the
+  dead `enable_admin_roles` flag (fail-secure but misleading): enforcement can't be flag-disabled,
+  and an empty `VIEWER_PASSWORD` simply disables the viewer login. The fail-closed prod guard now
+  also rejects a placeholder `VIEWER_PASSWORD` (a weak one would grant read access to every transcript).
+- **2026-07-08 · Audit is append-only and PII-safe.** `app/domain/audit/` exposes only
+  `record`/`list_recent` (no update/delete). System fields carry local ids/intent only; the
+  operator `reason` is free-text so it is **PII-masked at write** (`mask_pii_in_text`) — no email/phone
+  lands in the trail at rest or via `GET /audit` (invariant #5).
+- **2026-07-08 · Privileged actions validate → audit → act.** Each of reveal/redeliver/approve
+  validates first (missing/non-eligible target → 400 with **no** audit and no side effect), then writes
+  the audit record **before** the side effect, so an audit-write failure can never leave an un-audited
+  reveal/redelivery/approval. Redeliver's reset is a status-guarded atomic update, so a double-click
+  can't double-enqueue. Verified live on staging: viewer 403 on all three; admin reveal unmasked +
+  reason masked in audit; approve publishes a draft; redeliver re-enqueues and the worker delivered
+  it end-to-end; audit shows all three actions.
+- **Deferred (non-security, to later phases):** cursor pagination on admin lists (plan V5 item 3);
+  full knowledge file upload/replace/remove + indexing-status polling (only **approve** shipped —
+  item 5); privacy-request management view (item 6 → Phase V6). The security-critical core (roles,
+  audit, reveal/redeliver/approve) shipped and gates green. 232 backend tests + 31 frontend.
