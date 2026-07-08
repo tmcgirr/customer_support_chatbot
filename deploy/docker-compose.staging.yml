@@ -1,0 +1,48 @@
+# Staging stack for a single DigitalOcean Droplet: FastAPI + Mongo (dev) behind
+# Caddy (auto-HTTPS, SSE-safe). Bring up on the droplet with:
+#   STAGING_DOMAIN=staging.example.com \
+#     docker compose -f deploy/docker-compose.staging.yml --env-file deploy/staging.env up -d --build
+#
+# Secrets come from deploy/staging.env (created on the droplet, gitignored, never
+# committed). The api runs as ENV=staging, so config validation requires every
+# real input — a half-configured deploy refuses to boot.
+
+services:
+  api:
+    build: ../backend
+    env_file: ./staging.env
+    environment:
+      ENV: staging
+      MONGO_URI: mongodb://mongo:27017/cadre_chatbot
+    depends_on:
+      - mongo
+    restart: unless-stopped
+    expose:
+      - "8000"
+
+  mongo:
+    image: mongo:7
+    volumes:
+      - mongo-data:/data/db
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      STAGING_DOMAIN: ${STAGING_DOMAIN:?set STAGING_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../frontend/dist:/srv/www:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  mongo-data:
+  caddy-data:
+  caddy-config:

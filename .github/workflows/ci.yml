@@ -17,6 +17,7 @@ jobs:
         ports:
           - 27017:27017
     env:
+      ENV: dev
       MONGO_URI: mongodb://localhost:27017/cadre_chatbot
     steps:
       - uses: actions/checkout@v4
@@ -45,6 +46,7 @@ jobs:
         ports:
           - 27017:27017
     env:
+      ENV: dev
       MONGO_URI: mongodb://localhost:27017/cadre_chatbot
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       OPENAI_VECTOR_STORE_ID: ${{ secrets.OPENAI_VECTOR_STORE_ID }}

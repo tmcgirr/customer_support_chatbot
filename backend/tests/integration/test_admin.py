@@ -11,12 +11,22 @@ _settings = get_settings()
 ADMIN_AUTH = (_settings.admin_username, _settings.admin_password.get_secret_value())
 
 ADMIN_ROUTES = [
+    "/api/v1/admin/system",
     "/api/v1/admin/dashboard",
     "/api/v1/admin/conversations",
     "/api/v1/admin/conversations/cnv_x",
     "/api/v1/admin/requests",
     "/api/v1/admin/unresolved-questions",
 ]
+
+
+async def test_system_reports_env_behind_auth(client: httpx.AsyncClient) -> None:
+    resp = await client.get("/api/v1/admin/system", auth=ADMIN_AUTH)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["env"] == "dev"
+    assert "delivery" in body["feature_flags"]
+    assert body["version"]
 
 
 @pytest.mark.parametrize("route", ADMIN_ROUTES)

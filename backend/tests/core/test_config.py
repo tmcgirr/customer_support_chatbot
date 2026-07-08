@@ -29,3 +29,13 @@ def test_key_ring_active_key_wins_over_extra() -> None:
     ring = settings.session_key_ring
     assert ring["k1"] == "active"  # active secret overrides an extra with the same kid
     assert ring["k0"] == "old"
+
+
+def test_feature_flags_default_off() -> None:
+    settings = Settings(_env_file=None, env="dev")
+    assert settings.feature_flags == {"delivery": False, "citations": False, "admin_roles": False}
+
+
+def test_feature_flags_env_override() -> None:
+    settings = Settings(_env_file=None, env="dev", enable_citations=True)
+    assert settings.feature_flags["citations"] is True

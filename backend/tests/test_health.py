@@ -8,5 +8,7 @@ async def test_healthz_ok(client: httpx.AsyncClient) -> None:
     body = resp.json()
     assert body["status"] == "ok"
     assert body["version"]
+    # Public probe stays minimal — env/build are admin-gated, not here.
+    assert "env" not in body and "build" not in body
     # The request-context middleware stamps every response.
     assert resp.headers["X-Request-ID"].startswith("rid_")

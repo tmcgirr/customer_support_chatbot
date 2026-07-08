@@ -98,7 +98,8 @@ def create_app() -> FastAPI:
 
     register_exception_handlers(app)
     app.include_router(health.router)
-    app.include_router(dev.router)
+    if settings.env == "dev":
+        app.include_router(dev.router)  # /api/v1/dev/stream-test scaffold — dev only
     app.include_router(public_conversations.router)
     app.include_router(public_messages.router)
     app.include_router(public_requests.router)

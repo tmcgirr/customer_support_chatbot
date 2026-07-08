@@ -12,9 +12,19 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app import __version__
 
-# Placeholder secrets shipped in-repo for local dev. A non-dev deployment that
-# still uses one is a hard misconfiguration (see the startup guard below).
+# Placeholder values shipped in-repo for local dev. A non-dev deployment that
+# still uses one is a hard misconfiguration (see the startup validation below).
 _INSECURE_DEFAULT = "dev-only-change-me"
+_DEFAULT_MONGO_URI = "mongodb://localhost:27017/cadre_chatbot"
+_DEFAULT_CORS = "http://localhost:5273"
+
+# Environments. Only "dev" is allowed to run on the in-repo placeholder config.
+_VALID_ENVS = frozenset({"dev", "staging", "prod"})
+_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _is_local_host(host: str | None) -> bool:
+    return host is not None and host.strip("[]").lower() in _LOCAL_HOSTS
 
 
 class Settings(BaseSettings):
@@ -25,13 +35,17 @@ class Settings(BaseSettings):
     )
 
     # Defaults to "prod" so a deployment that forgets to set ENV fails CLOSED —
-    # the secret guard below runs and rejects the in-repo placeholder secrets.
+    # the config validation below runs and rejects the in-repo placeholder config.
     # Local dev / tests set ENV=dev explicitly (.env, compose, tests/conftest).
     env: str = "prod"
     app_version: str = __version__
+    # Build/commit stamp, set from the BUILD_SHA env var at build/deploy time
+    # (deploy/staging.env, or `ENV BUILD_SHA` in the Dockerfile from CI); surfaced
+    # on the admin system endpoint for deploy verification.
+    build_sha: str = "unknown"
 
     # --- Persistence (URI may embed credentials; keep it a secret) ---
-    mongo_uri: SecretStr = SecretStr("mongodb://localhost:27017/cadre_chatbot")
+    mongo_uri: SecretStr = SecretStr(_DEFAULT_MONGO_URI)
 
     # --- Model provider ---
     openai_api_key: SecretStr = SecretStr("")
@@ -71,11 +85,24 @@ class Settings(BaseSettings):
     admin_password: SecretStr = SecretStr("dev-only-change-me")
 
     # --- Widget dev origins ---
-    cors_origins: str = "http://localhost:5273"
+    cors_origins: str = _DEFAULT_CORS
+
+    # --- Feature flags (V1 surfaces dark-launched OFF; enable per environment) ---
+    enable_delivery: bool = False  # V4: external request delivery worker
+    enable_citations: bool = False  # V7: citation display on grounded answers
+    enable_admin_roles: bool = False  # V5: admin/viewer role enforcement
 
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def feature_flags(self) -> dict[str, bool]:
+        return {
+            "delivery": self.enable_delivery,
+            "citations": self.enable_citations,
+            "admin_roles": self.enable_admin_roles,
+        }
 
     @property
     def session_key_ring(self) -> dict[str, str]:
@@ -89,23 +116,46 @@ class Settings(BaseSettings):
         return ring
 
     @model_validator(mode="after")
-    def _forbid_default_secrets_outside_dev(self) -> "Settings":
-        """Fail fast if a non-dev deployment still ships the in-repo placeholder
-        secrets. A default admin password or session secret in prod would let
-        anyone unlock the admin PII surface or forge session tokens."""
+    def _validate_env_config(self) -> "Settings":
+        """Fail CLOSED on startup for a non-dev environment that is missing real
+        configuration. Only ``dev`` may run on the in-repo placeholders; ``staging``
+        and ``prod`` must supply real secrets AND the required production inputs, so
+        a half-configured deploy never boots (a default admin password or an
+        unset Vector Store would otherwise ship silently)."""
+        if self.env not in _VALID_ENVS:
+            raise ValueError(f"ENV must be one of {sorted(_VALID_ENVS)}, got {self.env!r}")
         if self.env == "dev":
             return self
-        insecure = [
-            name
-            for name, value in (
-                ("SESSION_SECRET", self.session_secret.get_secret_value()),
-                ("ADMIN_PASSWORD", self.admin_password.get_secret_value()),
-            )
-            if value == _INSECURE_DEFAULT or value == ""
+        problems: list[str] = []
+        # Placeholder / empty secrets must be replaced (strip so whitespace-only
+        # values — which "look set" — are still rejected).
+        if self.session_secret.get_secret_value().strip() in ("", _INSECURE_DEFAULT):
+            problems.append("SESSION_SECRET (placeholder or empty)")
+        if self.admin_password.get_secret_value().strip() in ("", _INSECURE_DEFAULT):
+            problems.append("ADMIN_PASSWORD (placeholder or empty)")
+        if not self.openai_api_key.get_secret_value().strip():
+            problems.append("OPENAI_API_KEY (unset)")
+        if not self.openai_vector_store_id.strip():
+            problems.append("OPENAI_VECTOR_STORE_ID (unset)")
+        # Mongo must not point at localhost — check the parsed host, not a literal
+        # string, so 127.0.0.1 / a different db / query params don't slip through.
+        mongo = self.mongo_uri.get_secret_value().strip()
+        if not mongo or _is_local_host(urlsplit(mongo).hostname):
+            problems.append("MONGO_URI (unset or localhost)")
+        # CORS must be real https origins — never "*" or a localhost origin, which
+        # would silently trust any/dev pages against the public API.
+        origins = self.cors_origin_list
+        bad_origins = [
+            o
+            for o in origins
+            if o == "*" or not o.startswith("https://") or _is_local_host(urlsplit(o).hostname)
         ]
-        if insecure:
+        if not origins or bad_origins:
+            detail = f"; offending: {bad_origins}" if bad_origins else ""
+            problems.append(f"CORS_ORIGINS (must be https non-localhost origins{detail})")
+        if problems:
             raise ValueError(
-                f"insecure default secret(s) in env={self.env!r}: {', '.join(insecure)}. "
+                f"invalid config for env={self.env!r}: {'; '.join(problems)}. "
                 "Set real values via environment before deploying, or set ENV=dev for local dev."
             )
         return self

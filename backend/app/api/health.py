@@ -15,4 +15,7 @@ class HealthResponse(BaseModel):
 
 @router.get("/healthz", response_model=HealthResponse, tags=["health"])
 async def healthz() -> HealthResponse:
+    # Minimal public liveness probe. Environment/build details are operational
+    # and live behind admin auth (GET /api/v1/admin/system), not on this public
+    # endpoint, so an unauthenticated caller can't fingerprint env or build.
     return HealthResponse(status="ok", version=get_settings().app_version)

@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from app.api.admin.auth import AdminDep
 from app.api.deps import RepoDep, RequestRepoDep
+from app.core.config import get_settings
 from app.core.errors import AppError, ErrorCode
 from app.core.masking import mask_email, mask_pii_in_text
 
@@ -88,6 +89,26 @@ class UnresolvedQuestion(BaseModel):
 
 class UnresolvedListResponse(BaseModel):
     questions: list[UnresolvedQuestion]
+
+
+class SystemResponse(BaseModel):
+    env: str
+    version: str
+    build: str
+    feature_flags: dict[str, bool]
+
+
+@router.get("/system", response_model=SystemResponse)
+async def system(_admin: AdminDep) -> SystemResponse:
+    """Deploy/build metadata for operators (admin-gated so the public surface
+    can't fingerprint env or build)."""
+    settings = get_settings()
+    return SystemResponse(
+        env=settings.env,
+        version=settings.app_version,
+        build=settings.build_sha,
+        feature_flags=settings.feature_flags,
+    )
 
 
 @router.get("/dashboard", response_model=DashboardResponse)

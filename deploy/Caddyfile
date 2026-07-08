@@ -1,0 +1,29 @@
+# Staging reverse proxy for the Cadre AI chatbot.
+# Caddy terminates TLS (automatic HTTPS) and serves the widget/admin static
+# build, proxying /api and /healthz to the FastAPI container.
+#
+# CRITICAL for SSE: `flush_interval -1` disables response buffering so streamed
+# `response.delta` events reach the browser immediately (not batched into one
+# paint). This is the single most common cause of "streaming looks buffered".
+
+{$STAGING_DOMAIN} {
+	encode zstd gzip
+
+	# API — stream responses immediately (SSE-safe).
+	handle /api/* {
+		reverse_proxy api:8000 {
+			flush_interval -1
+		}
+	}
+
+	handle /healthz {
+		reverse_proxy api:8000
+	}
+
+	# Widget (index.html) + admin (admin.html) static build.
+	handle {
+		root * /srv/www
+		try_files {path} {path}/ /index.html
+		file_server
+	}
+}
