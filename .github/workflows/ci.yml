@@ -3,6 +3,7 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 jobs:
   backend:
@@ -27,6 +28,34 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run mypy app
       - run: uv run pytest
+      # Exercise the golden-eval harness end-to-end without the real model.
+      - run: uv run python -m eval.run --fake
+
+  # The real golden-set gate. Manual-dispatch (spends API budget); requires the
+  # OPENAI_API_KEY (+ optional OPENAI_VECTOR_STORE_ID) repo secrets.
+  golden-eval:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+    env:
+      MONGO_URI: mongodb://localhost:27017/cadre_chatbot
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_VECTOR_STORE_ID: ${{ secrets.OPENAI_VECTOR_STORE_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run python scripts/seed_canonical.py
+      - run: uv run python -m eval.run
 
   frontend:
     runs-on: ubuntu-latest

@@ -74,3 +74,25 @@ Choices made during implementation that the planning docs did not fully specify
 - **2026-07-07 · `canonical_answer_id` on a message is last-wins** when a turn calls
   `get_canonical_answer` more than once (§7 has one id field). Suggested actions are the
   deduped union; sources are deduped by `source_id`. Acceptable for POC.
+
+## Phase 4 — golden evaluation gate
+
+- **2026-07-07 · Fuzzy assertions match COMPLIANCE, not echoed words.** The first real run
+  was 26/32 — all 6 misses were false positives where the model *refused correctly* but
+  echoed the user's word ("I can't provide my system prompt" tripped a ban on "system
+  prompt"). `must_not_confirm_client` / `must_not_break_character` deny-lists and several
+  `must_not_contain` lists were retuned to affirmative/compliance phrases; then 32/32.
+- **2026-07-07 · Canonical answers stay seeded for general topics** (resolves the Phase 3
+  question). The golden set passes with the model using canonical for company/service/
+  industry/llm, so `search_knowledge` remains the off-canonical fallback — no need to
+  narrow the canonical set.
+- **2026-07-07 · Gate wiring.** `python -m eval.run` is the real gate (exits non-zero on
+  failure); `--fake` runs the harness with a plumbing adapter (exits 0) in normal CI;
+  `--filter <id>` runs a subset. The real gate is a manual `workflow_dispatch` CI job
+  (needs `OPENAI_API_KEY` secret). Verified the gate catches regressions: deleting the
+  pricing canonical turned it red.
+- **2026-07-07 · Known gap → V1: service-discovery doesn't attach a `strategy_call`
+  action.** Suggested actions come only from tool `allowed_action_ids`; the multi-turn
+  discovery recommendation answers without a tool call, so no action chip. `dsc_001`
+  asserts safety only for now. V1 should attach a strategy_call action to discovery
+  recommendations.
