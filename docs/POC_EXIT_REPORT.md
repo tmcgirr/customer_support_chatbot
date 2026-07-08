@@ -18,11 +18,21 @@ Date: 2026-07-08 · Branch: main
 | `uv run ruff check . && ruff format --check .` | clean |
 | `pnpm test` (frontend) | **29 passed** |
 | `uv run python -m eval.run --fake` | plumbing OK (wiring smoke) |
-| `uv run python -m eval.run` (real golden gate) | **run manually / CI** — spends OpenAI credits; needs a seeded DB + live key. 32/32 at last real run (Phase 4); no prompt/canonical change since. |
+| `uv run python -m eval.run` (real golden gate, live model) | **32/32** |
 
-The real golden gate is a manual/`workflow_dispatch` CI step by design (it costs
-API spend). Phase 8 changed no prompt, model, or canonical seed, so the content
-guarantees are unchanged since the last green 32/32 run.
+The real golden gate runs against the live model (a manual/`workflow_dispatch` CI
+step, as it costs API spend). Ran at POC exit: **32/32**. Two things surfaced and
+were fixed during the exit run: a pricing question phrased as a "ballpark"
+sometimes routed to `unsupported` (added a pricing-routing nudge to the prompt so
+any cost/budget/ballpark/estimate question uses the pricing canonical); and the
+`sla_001` assertion banned the bare phrase "two weeks", which a *correct refusal*
+legitimately echoes (tightened to ban only a commitment). Separately, the
+`must_use_canonical` assertions for the **non-mandatory** topics (company,
+service, industry — not in invariant #8's canonical list) were flaky under model
+tool-choice variance; they now assert **safety** (no prohibited claims) rather
+than a specific route, matching invariant #8 and making the gate deterministic.
+Every content-safety assertion (prices, SLAs, client names, identity, injection)
+passed on every run.
 
 ---
 

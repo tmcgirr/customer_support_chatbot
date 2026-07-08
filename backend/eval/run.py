@@ -95,16 +95,20 @@ async def _run_case(
     repo: ConversationRepository,
     canonical_by_id: dict[str, tuple[str, bool]],
     case: dict[str, Any],
+    show: bool = False,
 ) -> list[str]:
     conversation = await repo.create(entry_page="eval")
     last: TurnResult | None = None
     for content in case["turns"]:
         last = await _run_turn(orchestrator, repo, canonical_by_id, conversation.id, content)
     assert last is not None
+    if show:
+        print(f"      · intent={last.canonical_intent} actions={last.suggested_action_ids}")
+        print(f"      · text: {last.text!r}")
     return evaluate(case.get("assert", {}), last)
 
 
-async def main(fake: bool, id_filter: str = "") -> int:
+async def main(fake: bool, id_filter: str = "", show: bool = False) -> int:
     settings = get_settings()
     client: AsyncIOMotorClient[dict[str, Any]] = AsyncIOMotorClient(
         settings.mongo_uri.get_secret_value(), tz_aware=True
@@ -133,7 +137,7 @@ async def main(fake: bool, id_filter: str = "") -> int:
     failed = 0
     for case in cases:
         try:
-            failures = await _run_case(orchestrator, repo, canonical_by_id, case)
+            failures = await _run_case(orchestrator, repo, canonical_by_id, case, show=show)
         except Exception as exc:  # a crashed case is a failed case
             failures = [f"error: {type(exc).__name__}: {exc}"]
         if failures:
@@ -161,8 +165,11 @@ def _cli() -> int:
         "--fake", action="store_true", help="Use a plumbing adapter (always exits 0)"
     )
     parser.add_argument("--filter", default="", help="Run only cases whose id contains this")
+    parser.add_argument(
+        "--show", action="store_true", help="Print each case's response text + routed intent"
+    )
     args = parser.parse_args()
-    return asyncio.run(main(fake=args.fake, id_filter=args.filter))
+    return asyncio.run(main(fake=args.fake, id_filter=args.filter, show=args.show))
 
 
 if __name__ == "__main__":

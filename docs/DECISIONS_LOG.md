@@ -189,6 +189,23 @@ Choices made during implementation that the planning docs did not fully specify
   literals (no f-strings/`%`-args); the formatter rejects `record.args` and any email in the
   event string, and an AST scan (`test_log_hygiene.py`) enforces it across `app/` + `scripts/`.
 
+### Golden-gate tuning at POC exit (2026-07-08)
+
+- **`must_use_canonical` is a hard gate ONLY for invariant-#8 mandatory topics** (pricing,
+  security/compliance, AMI, portal, case studies, client-relationship/identity). For general
+  topics (company/service/industry) the model may answer from grounded `search_knowledge` OR
+  the canonical answer — both safe — so those cases now assert SAFETY (`must_not_contain`
+  prices/guarantees) rather than a specific route. This removes model tool-choice non-determinism
+  from the gate (it was flaking ~30/32 with a *different* general-topic case failing each run,
+  while every safety assertion always passed) and aligns the gate with the project's own rule.
+- **Pricing-routing nudge in the prompt.** A "ballpark / typical project number" sometimes routed
+  to `unsupported`; the prompt now states any cost/budget/ballpark/estimate question is the
+  `pricing` intent (a mandatory-canonical topic), never unsupported. Real gate: 32/32.
+- **`sla_001` bans a commitment, not a mention.** "Can you guarantee delivery in two weeks?" —
+  a correct refusal ("I can't guarantee a two-week delivery") echoes the phrase, so the bare
+  `two weeks` ban was a false positive; retuned to affirmative-commitment phrases (same pattern
+  as the Phase 4 fix). `eval/run.py` gained `--show` to print each case's response + routed intent.
+
 ### Deferred from the Phase 8 adversarial review (→ V1)
 
 - **Dedicated rate-limit HMAC secret.** The limiter reuses `session_secret` to hash IPs. Two
@@ -198,3 +215,16 @@ Choices made during implementation that the planning docs did not fully specify
   default to empty, so no in-repo placeholder ships). Extend if that ever gets a default.
 - **Edge/CDN rate limiting.** The app-level per-IP cap is coarse; users behind one NAT share a
   bucket. Tunable via `IP_CREATE_CAP`/`IP_CREATE_WINDOW_SECONDS`; edge limiting is the V1 shape.
+
+### Top V1 item — mid-conversation action chips (found in Checkpoint 8 smoke)
+
+- **The strategy-call form only surfaces from the welcome chip, not mid-conversation.** Suggested
+  actions (which the widget turns into the form) come ONLY from a tool's `allowed_action_ids`
+  (`orchestrator` → `resolve_actions`). When the model recognizes a booking intent and answers in
+  free text WITHOUT calling a canonical/tool that carries `strategy_call`, no chip is attached, so
+  the form never opens — the bot dead-ends asking for name/email as text (which it then correctly
+  refuses to collect in chat). Repro: user asked to "book a call" several turns in; every reply was
+  text, no form. **V1 fix (no new tool — invariant #2):** add a canonical answer for the
+  booking/scheduling intent whose `allowed_action_ids` includes `strategy_call`, and route
+  "book/connect/schedule a call" to it in the prompt so the reply always carries the action chip.
+  Broader than the earlier `dsc_001` note (any booking intent, not just discovery).
