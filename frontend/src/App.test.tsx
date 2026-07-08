@@ -1,63 +1,47 @@
-import { act, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App";
 
-type Listener = (event: { data: string }) => void;
+vi.mock("./api/client", () => ({
+  createConversation: vi.fn().mockResolvedValue({
+    conversation_id: "cnv_1",
+    session_token: "tok",
+    welcome: {
+      text: "Hi, I'm Cadre AI's virtual assistant.",
+      suggested_actions: [
+        { id: "company_overview", label: "What does Cadre AI do?" },
+        { id: "strategy_call", label: "Book a strategy call" },
+      ],
+    },
+  }),
+  sendMessage: vi.fn(),
+  submitRequest: vi.fn(),
+  submitFeedback: vi.fn(),
+  newClientMessageId: () => "cmid_test",
+  ApiError: class ApiError extends Error {},
+}));
 
-/** Minimal EventSource stand-in the test drives manually. */
-class FakeEventSource {
-  static instances: FakeEventSource[] = [];
-  url: string;
-  onerror: (() => void) | null = null;
-  closed = false;
-  private listeners: Record<string, Listener[]> = {};
+afterEach(() => vi.clearAllMocks());
 
-  constructor(url: string) {
-    this.url = url;
-    FakeEventSource.instances.push(this);
-  }
-
-  addEventListener(name: string, fn: Listener) {
-    (this.listeners[name] ??= []).push(fn);
-  }
-
-  emit(name: string, data: unknown) {
-    const event = { data: JSON.stringify(data) };
-    (this.listeners[name] ?? []).forEach((fn) => fn(event));
-  }
-
-  close() {
-    this.closed = true;
-  }
-}
-
-beforeEach(() => {
-  FakeEventSource.instances = [];
-  vi.stubGlobal("EventSource", FakeEventSource as unknown as typeof EventSource);
-});
-
-afterEach(() => {
-  vi.unstubAllGlobals();
-});
-
-describe("App walking skeleton", () => {
-  it("connects to the stream-test endpoint and renders deltas progressively", () => {
+describe("widget integration", () => {
+  it("opens the panel and shows the welcome + suggested chips", async () => {
     render(<App />);
-    const source = FakeEventSource.instances[0];
-    expect(source.url).toContain("/api/v1/dev/stream-test");
+    fireEvent.click(screen.getByRole("button", { name: "Chat with us" }));
 
-    act(() => source.emit("response.started", {}));
-    expect(screen.getByTestId("status").textContent).toContain("streaming");
+    expect(await screen.findByText(/Cadre AI's virtual assistant/i)).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "Book a strategy call" }),
+    ).toBeInTheDocument();
+  });
 
-    act(() => source.emit("response.delta", { index: 0, text: "Hello " }));
-    expect(screen.getByTestId("stream").textContent).toBe("Hello ");
+  it("opens the strategy-call form when its chip is selected (side effects via a form)", async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Chat with us" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Book a strategy call" }));
 
-    act(() => source.emit("response.delta", { index: 1, text: "world" }));
-    expect(screen.getByTestId("stream").textContent).toBe("Hello world");
-
-    act(() => source.emit("response.completed", { delta_count: 2 }));
-    expect(screen.getByTestId("status").textContent).toContain("completed");
-    expect(source.closed).toBe(true);
+    expect(
+      await screen.findByText(/request a conversation with an AI strategist/i),
+    ).toBeInTheDocument();
   });
 });

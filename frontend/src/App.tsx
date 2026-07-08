@@ -1,60 +1,66 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
+import { ConversationView, useConversation } from "./conversation";
+import RequestForm from "./forms/RequestForm";
+import { WidgetFrame } from "./shell/WidgetFrame";
+import type { RequestType, SuggestedAction } from "./types";
 
-type Status = "idle" | "streaming" | "completed" | "error";
-
-interface DeltaPayload {
-  index: number;
-  text: string;
-}
+// Suggested-action IDs that open a structured form (side effects go through the
+// browser, never the model — ADR-016). Everything else is sent as a message.
+const ACTION_TO_FORM: Record<string, RequestType> = {
+  strategy_call: "strategy_call",
+  portal_support: "portal_support",
+  human_escalation: "human_escalation",
+};
 
 export default function App() {
-  const [status, setStatus] = useState<Status>("idle");
-  const [tokens, setTokens] = useState<string[]>([]);
+  const [open, setOpen] = useState(false);
+  const [formType, setFormType] = useState<RequestType | null>(null);
+  const [originalQuestion, setOriginalQuestion] = useState<string | undefined>(undefined);
+  const conversation = useConversation();
 
-  useEffect(() => {
-    const source = new EventSource(`${API_BASE}/api/v1/dev/stream-test`);
-
-    source.addEventListener("response.started", () => setStatus("streaming"));
-
-    source.addEventListener("response.delta", (event) => {
-      const payload = JSON.parse((event as MessageEvent).data) as DeltaPayload;
-      setTokens((prev) => [...prev, payload.text]);
-    });
-
-    source.addEventListener("response.completed", () => {
-      setStatus("completed");
-      source.close();
-    });
-
-    source.onerror = () => {
-      // A clean close after completion also fires onerror; don't clobber success.
-      setStatus((current) => (current === "completed" ? current : "error"));
-      source.close();
-    };
-
-    return () => source.close();
-  }, []);
+  function handleSelectAction(action: SuggestedAction): void {
+    const form = ACTION_TO_FORM[action.id];
+    if (!form) {
+      conversation.send(action.label);
+      return;
+    }
+    if (form === "human_escalation") {
+      const lastUser = [...conversation.messages].reverse().find((m) => m.role === "user");
+      setOriginalQuestion(lastUser?.content);
+    }
+    setFormType(form);
+  }
 
   return (
-    <main className="skeleton">
-      <h1>Cadre AI — walking skeleton</h1>
-      <p className="status" data-testid="status">
-        SSE status: <strong>{status}</strong>
-      </p>
-      <div className="stream" aria-live="polite" data-testid="stream">
-        {tokens.map((token, index) => (
-          <span key={index} className="token">
-            {token}
-          </span>
-        ))}
-      </div>
-      {status === "error" && (
-        <p className="error" role="alert">
-          Stream error — is the backend running at {API_BASE}?
-        </p>
+    <WidgetFrame
+      open={open}
+      onToggle={() => setOpen((value) => !value)}
+      onClose={() => setOpen(false)}
+    >
+      {formType && conversation.conversationId && conversation.sessionToken ? (
+        <RequestForm
+          type={formType}
+          conversationId={conversation.conversationId}
+          token={conversation.sessionToken}
+          originalQuestion={originalQuestion}
+          onClose={() => setFormType(null)}
+          onSubmitted={() => undefined}
+        />
+      ) : (
+        <ConversationView
+          welcome={conversation.welcome}
+          messages={conversation.messages}
+          status={conversation.status}
+          error={conversation.error}
+          canSend={conversation.canSend}
+          onSend={conversation.send}
+          onSelectAction={handleSelectAction}
+          onRetry={conversation.retryLast}
+          onRate={conversation.rate}
+          onDismissError={conversation.clearError}
+        />
       )}
-    </main>
+    </WidgetFrame>
   );
 }

@@ -1,0 +1,183 @@
+.rf-root {
+  max-width: 32rem;
+  padding: 1rem 1.25rem 1.25rem;
+  color: #1a1a2e;
+}
+
+.rf-title {
+  font-size: 1.15rem;
+  margin: 0 0 0.75rem;
+}
+
+.rf-help {
+  color: #444;
+  line-height: 1.5;
+  margin: 0 0 1rem;
+}
+
+.rf-subhead {
+  font-weight: 600;
+  margin: 1rem 0 0.25rem;
+}
+
+.rf-warning {
+  background: #fff4e5;
+  border: 1px solid #ffb74d;
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  margin: 0 0 1rem;
+  color: #7a4b00;
+}
+
+.rf-form,
+.rf-review,
+.rf-result {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.rf-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.rf-field label {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.rf-optional {
+  font-weight: 400;
+  color: #777;
+}
+
+.rf-field input[type="text"],
+.rf-field input[type="email"],
+.rf-field textarea,
+.rf-field select {
+  font: inherit;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid #c7cad8;
+  border-radius: 6px;
+  background: #fff;
+  color: inherit;
+}
+
+.rf-field textarea {
+  resize: vertical;
+}
+
+.rf-field input[aria-invalid="true"],
+.rf-field textarea[aria-invalid="true"] {
+  border-color: #b00020;
+}
+
+.rf-error {
+  color: #b00020;
+  font-size: 0.85rem;
+}
+
+.rf-consent {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.rf-consent label {
+  font-weight: 400;
+}
+
+.rf-consent-statement {
+  background: #f2f3f9;
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.rf-summary {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.rf-summary-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.rf-summary-row dt {
+  font-size: 0.8rem;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.rf-summary-row dd {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.rf-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+
+.rf-btn {
+  font: inherit;
+  padding: 0.5rem 0.9rem;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.rf-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.rf-btn-primary {
+  background: #3a36e0;
+  color: #fff;
+}
+
+.rf-btn-ghost {
+  background: #fff;
+  border-color: #c7cad8;
+  color: #1a1a2e;
+}
+
+/* Visible keyboard focus for every interactive element. */
+.rf-root :focus-visible {
+  outline: 3px solid #3a36e0;
+  outline-offset: 2px;
+}
+
+.rf-success {
+  color: #1b5e20;
+  font-weight: 600;
+  margin: 0;
+}
+
+.rf-notice {
+  color: #7a4b00;
+  margin: 0;
+}
+
+.rf-error-banner {
+  color: #b00020;
+  background: #fdecef;
+  border: 1px solid #f4a9b6;
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  margin: 0;
+  line-height: 1.5;
+}

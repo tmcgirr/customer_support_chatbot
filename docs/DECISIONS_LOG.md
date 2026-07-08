@@ -96,3 +96,21 @@ Choices made during implementation that the planning docs did not fully specify
   discovery recommendation answers without a tool call, so no action chip. `dsc_001`
   asserts safety only for now. V1 should attach a strategy_call action to discovery
   recommendations.
+
+## Phase 5 — iframe chat widget
+
+- **2026-07-07 · Streaming uses fetch + a stream reader, not EventSource** (the send-message
+  endpoint is POST-with-SSE). The parser normalizes CRLF, flushes a trailing frame, and —
+  if the stream closes with no terminal event (proxy/LB drop) — the turn is marked failed
+  with the partial text kept and a retry offered (never a permanent "streaming" hang).
+- **2026-07-07 · Session token lives in memory only** (never localStorage); sent as
+  `Authorization: Bearer`; never posted to the host or logged. Host↔iframe messaging is
+  origin-checked (`src/host/messaging.ts`); `public/loader.js` embeds the iframe.
+- **2026-07-07 · One idempotency key per form submission, reused across retries** (minted
+  when entering review) so a resubmit dedupes server-side instead of double-creating a
+  request.
+- **2026-07-07 · `VITE_ALLOWED_ORIGINS` defaults to `"*"` for dev (fails open).** PROD MUST
+  set it to real host origins. Documented POC trade-off, like the placeholder portal URL.
+- **Deferred → V1 polish:** an expired session (`UNAUTHORIZED_SESSION`) maps to the generic
+  failure copy without re-creating the conversation; `limit.reached` leaves the composer
+  enabled (user can re-hit the cap). Both noted by the Phase 5 review.
