@@ -30,6 +30,17 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr = SecretStr("")
     openai_model: str = "gpt-5.4-mini"
 
+    # --- Knowledge retrieval (set OPENAI_VECTOR_STORE_ID after upload_knowledge.py) ---
+    openai_vector_store_id: str = ""
+
+    # --- Client portal (get_portal_information tool; URL is a placeholder for POC) ---
+    portal_url: str = "https://portal.cadre.ai"
+    portal_reset_instructions: str = (
+        "If you can't sign in, use the 'forgot password' option on the sign-in page. "
+        "For security, access issues are handled through a support request — never share "
+        "your password or authentication codes."
+    )
+
     # --- Session tokens (HMAC, versioned by key id; contracts §2) ---
     session_key_id: str = "k1"
     session_secret: SecretStr = SecretStr("dev-only-change-me")

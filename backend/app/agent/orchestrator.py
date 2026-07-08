@@ -1,16 +1,14 @@
-"""Chat orchestrator — the turn loop (ADR §3.1).
+"""Chat orchestrator — the turn loop with read-only tools (ADR §3.1, ADR-016).
 
-begin_turn (atomic lock+append) → build the window (system prompt + transcript;
-the cap guarantees it fits, no summarization at POC) → stream from the adapter,
-relaying deltas as SSE → complete_turn / fail_turn, persisting the assistant
-message with usage, latency, and any error_code.
+begin_turn (atomic lock+append) → build the window → run the model/tool loop
+(the model may call the read-only tools; the app executes them and resends the
+transcript each round, stateless) → complete_turn / fail_turn, persisting the
+assistant message with content, usage, latency, canonical_answer_id, sources,
+suggested actions, and any error_code.
 
-The orchestrator yields transport-agnostic ``StreamMessage`` objects; the route
-formats them as SSE. It never imports OpenAI types (only the adapter does).
-
-Lock discipline: the run lock is released on EVERY exit path — success, adapter
-failure, unexpected error, or client disconnect — so a conversation can never be
-bricked at CONVERSATION_BUSY by a dropped turn.
+The orchestrator yields transport-agnostic ``StreamMessage`` objects; it never
+imports OpenAI types (only the adapter does). The run lock is released on EVERY
+exit path so a dropped turn can never brick a conversation at CONVERSATION_BUSY.
 """
 
 import time
@@ -20,21 +18,28 @@ from datetime import UTC, datetime
 from app.agent.actions import resolve_actions
 from app.agent.adapter import (
     AdapterError,
+    AssistantToolCall,
     Completed,
+    InputItem,
     ModelAdapter,
     ModelMessage,
     TextDelta,
     ToolCall,
+    ToolOutput,
 )
 from app.agent.prompt import CURRENT_PROMPT_VERSION, load_system_prompt
+from app.agent.tools import ToolRegistry
 from app.api.sse import StreamMessage
 from app.core import ids
 from app.core.errors import ErrorCode
 from app.core.logging import get_logger, request_id_var
-from app.domain.conversations.models import Conversation, Message, Usage
+from app.domain.conversations.models import Conversation, Message, Source, Usage
 from app.domain.conversations.repository import BeginTurnResult, ConversationRepository
 
 logger = get_logger("app.orchestrator")
+
+# Bound the model/tool loop so a misbehaving model can't call tools forever.
+_MAX_TOOL_ROUNDS = 5
 
 _LIMIT_REACHED_COPY = (
     "You've reached the current chat limit. You can still contact Cadre through the options below."
@@ -55,21 +60,19 @@ class ChatOrchestrator:
         repo: ConversationRepository,
         adapter: ModelAdapter,
         *,
+        tool_registry: ToolRegistry | None = None,
         prompt_version: str = CURRENT_PROMPT_VERSION,
     ) -> None:
         self._repo = repo
         self._adapter = adapter
+        self._tool_registry = tool_registry
         self._prompt_version = prompt_version
 
     async def start_turn(self, conversation_id: str, content: str, cmid: str) -> BeginTurnResult:
         return await self._repo.begin_turn(conversation_id, content, cmid)
 
-    def _build_window(self, conversation: Conversation) -> list[ModelMessage]:
-        return [
-            ModelMessage(role=m.role, content=m.content)
-            for m in conversation.messages
-            if m.status == "completed" and m.content
-        ]
+    def _build_window(self, conversation: Conversation) -> list[Message]:
+        return [m for m in conversation.messages if m.status == "completed" and m.content]
 
     def _failed_event(self, code: str) -> StreamMessage:
         return StreamMessage(
@@ -108,24 +111,58 @@ class ChatOrchestrator:
         yield StreamMessage("response.started", {})
 
         instructions = load_system_prompt(self._prompt_version)
-        window = self._build_window(conversation)
+        input_items: list[InputItem] = [
+            ModelMessage(role=m.role, content=m.content) for m in self._build_window(conversation)
+        ]
+        tools = self._tool_registry.specs() if self._tool_registry is not None else None
+
         started = time.perf_counter()
         parts: list[str] = []
-        usage: Usage | None = None
+        usage_in = 0
+        usage_out = 0
+        usage_seen = False
+        canonical_answer_id: str | None = None
+        sources: list[Source] = []
+        seen_source_ids: set[str] = set()
+        suggested_action_ids: list[str] = []
         finalized = False
 
         try:
-            async for event in self._adapter.send(instructions=instructions, messages=window):
-                if isinstance(event, TextDelta):
-                    parts.append(event.text)
-                    yield StreamMessage("response.delta", {"text": event.text})
-                elif isinstance(event, ToolCall):
-                    continue  # No tools registered at Phase 2; Phase 3 dispatches these.
-                elif isinstance(event, Completed) and event.usage is not None:
-                    usage = Usage(
-                        input_tokens=event.usage.input_tokens,
-                        output_tokens=event.usage.output_tokens,
-                    )
+            for _round in range(_MAX_TOOL_ROUNDS):
+                # On the final permitted round, drop the tools so the model MUST
+                # produce a text answer instead of another tool call — otherwise a
+                # tool-happy model would leave us with an empty "completed" message.
+                round_tools = tools if _round < _MAX_TOOL_ROUNDS - 1 else None
+                round_tool_calls: list[ToolCall] = []
+                async for event in self._adapter.send(
+                    instructions=instructions, messages=input_items, tools=round_tools
+                ):
+                    if isinstance(event, TextDelta):
+                        parts.append(event.text)
+                        yield StreamMessage("response.delta", {"text": event.text})
+                    elif isinstance(event, ToolCall):
+                        round_tool_calls.append(event)
+                    elif isinstance(event, Completed) and event.usage is not None:
+                        usage_in += event.usage.input_tokens
+                        usage_out += event.usage.output_tokens
+                        usage_seen = True
+
+                if not round_tool_calls or self._tool_registry is None:
+                    break
+
+                for call in round_tool_calls:
+                    result = await self._tool_registry.execute(call.name, call.arguments)
+                    if result.canonical_answer_id is not None:
+                        canonical_answer_id = result.canonical_answer_id
+                    for source in result.sources:
+                        if source.source_id not in seen_source_ids:
+                            seen_source_ids.add(source.source_id)
+                            sources.append(source)
+                    for action_id in result.suggested_action_ids:
+                        if action_id not in suggested_action_ids:
+                            suggested_action_ids.append(action_id)
+                    input_items.append(AssistantToolCall(call.call_id, call.name, call.arguments))
+                    input_items.append(ToolOutput(call.call_id, result.output))
 
             latency_ms = int((time.perf_counter() - started) * 1000)
             assistant = Message(
@@ -133,15 +170,16 @@ class ChatOrchestrator:
                 role="assistant",
                 content="".join(parts),
                 status="completed",
-                usage=usage,
+                canonical_answer_id=canonical_answer_id,
+                sources=sources,
+                suggested_action_ids=suggested_action_ids,
+                usage=Usage(input_tokens=usage_in, output_tokens=usage_out) if usage_seen else None,
                 latency_ms=latency_ms,
                 created_at=_now(),
             )
             stored = await self._repo.complete_turn(conversation.id, run_id, assistant)
             finalized = True
             if stored is None:
-                # The lock was reclaimed (stale sweep / concurrent finish); this
-                # turn's message was not appended, so don't report success.
                 yield self._failed_event(ErrorCode.INTERNAL_ERROR.value)
             else:
                 logger.info(
@@ -154,7 +192,7 @@ class ChatOrchestrator:
                     "response.completed",
                     {
                         "assistant_message_id": assistant.id,
-                        "suggested_actions": resolve_actions(assistant.suggested_action_ids),
+                        "suggested_actions": resolve_actions(suggested_action_ids),
                     },
                 )
         except AdapterError as exc:
@@ -172,7 +210,6 @@ class ChatOrchestrator:
             await self._persist_failed(
                 conversation.id, run_id, parts, ErrorCode.INTERNAL_ERROR.value, started
             )
-            # exc_info logs the exception TYPE only (JsonFormatter drops the message).
             logger.error(
                 "chat.turn.error",
                 exc_info=True,
@@ -181,8 +218,6 @@ class ChatOrchestrator:
             yield self._failed_event(ErrorCode.INTERNAL_ERROR.value)
         finally:
             if not finalized:
-                # Client disconnected / task cancelled mid-stream: release the lock
-                # (best-effort; no yield is allowed while unwinding a GeneratorExit).
                 await self._persist_failed(
                     conversation.id, run_id, parts, ErrorCode.INTERNAL_ERROR.value, started
                 )

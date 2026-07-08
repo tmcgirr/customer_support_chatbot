@@ -55,3 +55,22 @@ Choices made during implementation that the planning docs did not fully specify
 - **Canonical-answer precedence in the prompt → Phase 3.** The prompt inlines approved
   framings now; the instruction to prefer `get_canonical_answer` is added when the
   read-only tools are registered (Phase 3), so the golden set (Phase 4) can gate it.
+
+## Phase 3 — knowledge, canonical answers, read-only tools
+
+- **2026-07-07 · Multi-round tool loop is app-driven and stateless.** The orchestrator runs
+  the model, executes any read-only tool calls, resends the whole transcript (prior text +
+  function_call/function_call_output items) each round, up to `_MAX_TOOL_ROUNDS` (5). The
+  final permitted round is sent with `tools=None` so the model must produce a text answer
+  rather than loop forever on tools.
+- **2026-07-07 · One `kbs_` id per source.** `upload_knowledge` stamps the same public
+  `kbs_` id into the vector-store file attributes AND `knowledge_sources._id`, so a
+  message citation's `source_id` joins back to its governance record (contracts §7).
+- **2026-07-07 · Canonical answers seeded for general topics too** (company/service/industry/
+  llm, per docs 05 §3), so the live model uses canonical precedence for them and
+  `search_knowledge` is the fallback for off-canonical / long-tail questions. Intentional
+  (invariant #8); the golden set (Phase 4) will decide whether to narrow the canonical set
+  to sensitive-only.
+- **2026-07-07 · `canonical_answer_id` on a message is last-wins** when a turn calls
+  `get_canonical_answer` more than once (§7 has one id field). Suggested actions are the
+  deduped union; sources are deduped by `source_id`. Acceptable for POC.

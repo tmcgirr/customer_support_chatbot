@@ -29,6 +29,28 @@ class ModelMessage:
 
 
 @dataclass(frozen=True)
+class AssistantToolCall:
+    """A function call the model made in a prior round, resent to continue the loop."""
+
+    call_id: str
+    name: str
+    arguments: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ToolOutput:
+    """The application's result for a prior AssistantToolCall."""
+
+    call_id: str
+    output: str
+
+
+# The stateless turn resends the whole conversation each round: prior text turns
+# plus any tool call/result pairs from earlier rounds of the SAME turn.
+InputItem = ModelMessage | AssistantToolCall | ToolOutput
+
+
+@dataclass(frozen=True)
 class ToolSpec:
     name: str
     description: str
@@ -76,12 +98,25 @@ class ModelAdapter(Protocol):
         self,
         *,
         instructions: str,
-        messages: list[ModelMessage],
+        messages: list[InputItem],
         tools: list[ToolSpec] | None = None,
     ) -> AsyncIterator[StreamEvent]: ...
 
 
 # --- Helpers ------------------------------------------------------------------
+
+
+def _to_input_item(item: InputItem) -> dict[str, Any]:
+    if isinstance(item, ModelMessage):
+        return {"role": item.role, "content": item.content}
+    if isinstance(item, AssistantToolCall):
+        return {
+            "type": "function_call",
+            "call_id": item.call_id,
+            "name": item.name,
+            "arguments": json.dumps(item.arguments),
+        }
+    return {"type": "function_call_output", "call_id": item.call_id, "output": item.output}
 
 
 def _parse_arguments(raw: str) -> dict[str, Any]:
@@ -115,13 +150,13 @@ class OpenAIResponsesAdapter:
         self,
         *,
         instructions: str,
-        messages: list[ModelMessage],
+        messages: list[InputItem],
         tools: list[ToolSpec] | None = None,
     ) -> AsyncIterator[StreamEvent]:
         request: dict[str, Any] = {
             "model": self._model,
             "instructions": instructions,
-            "input": [{"role": m.role, "content": m.content} for m in messages],
+            "input": [_to_input_item(m) for m in messages],
             "stream": True,
             # Stateless: never persist the response provider-side (ADR-014 keeps
             # MongoDB the single store, so deletion is a one-store operation).

@@ -4,6 +4,7 @@ This is the riskiest, most provider-coupled code; the real SDK is never called.
 A fake AsyncOpenAI client feeds hand-built event objects through `send`.
 """
 
+import json
 from types import SimpleNamespace
 from typing import Any
 
@@ -12,12 +13,14 @@ from openai import OpenAIError
 
 from app.agent.adapter import (
     AdapterError,
+    AssistantToolCall,
     Completed,
     ModelMessage,
     OpenAIResponsesAdapter,
     StreamEvent,
     TextDelta,
     ToolCall,
+    ToolOutput,
 )
 
 
@@ -162,3 +165,32 @@ async def test_openai_error_mid_stream_maps_to_adapter_error() -> None:
     )
     with pytest.raises(AdapterError):
         await _collect(_adapter(client))
+
+
+async def test_tool_call_input_items_serialize_for_round_two() -> None:
+    # The round-2 input (function_call + function_call_output) is what makes the
+    # multi-round tool loop work against the real Responses API.
+    client = _FakeClient([ev(type="response.completed", response=ev(usage=None))])
+    adapter = _adapter(client)
+    messages = [
+        ModelMessage(role="user", content="hi"),
+        AssistantToolCall(
+            call_id="call_1", name="get_canonical_answer", arguments={"intent": "pricing"}
+        ),
+        ToolOutput(call_id="call_1", output='{"matched": true}'),
+    ]
+    _ = [event async for event in adapter.send(instructions="sys", messages=messages)]
+
+    sent = client.responses.last_request
+    assert sent is not None
+    items = sent["input"]
+    assert items[0] == {"role": "user", "content": "hi"}
+    assert items[1]["type"] == "function_call"
+    assert items[1]["call_id"] == "call_1"
+    assert items[1]["name"] == "get_canonical_answer"
+    assert json.loads(items[1]["arguments"]) == {"intent": "pricing"}  # arguments is a JSON string
+    assert items[2] == {
+        "type": "function_call_output",
+        "call_id": "call_1",
+        "output": '{"matched": true}',
+    }

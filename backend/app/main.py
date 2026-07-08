@@ -16,7 +16,10 @@ from app.core.config import get_settings
 from app.core.db import create_mongo_client, get_database
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging, get_logger, new_request_id, request_id_var
-from app.domain.conversations.repository import ensure_indexes
+from app.domain.canonical.repository import ensure_indexes as ensure_canonical_indexes
+from app.domain.conversations.repository import ensure_indexes as ensure_conversation_indexes
+from app.domain.knowledge.repository import ensure_indexes as ensure_knowledge_indexes
+from app.domain.knowledge.search import KnowledgeSearch
 
 logger = get_logger("app.request")
 
@@ -25,15 +28,19 @@ logger = get_logger("app.request")
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     client = create_mongo_client()
     database = get_database(client)
-    await ensure_indexes(database["conversations"])
+    await ensure_conversation_indexes(database["conversations"])
+    await ensure_knowledge_indexes(database["knowledge_sources"])
+    await ensure_canonical_indexes(database["canonical_answers"])
     app.state.mongo_client = client
     app.state.db = database
     app.state.adapter = OpenAIResponsesAdapter()
+    app.state.knowledge_search = KnowledgeSearch()
     logger.info("app.startup", extra={"context": {"db": database.name}})
     try:
         yield
     finally:
         await app.state.adapter.aclose()
+        await app.state.knowledge_search.aclose()
         client.close()
         logger.info("app.shutdown")
 
