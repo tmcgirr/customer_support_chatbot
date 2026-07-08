@@ -14,9 +14,10 @@ tests rather than leaking silently in production.
 import json
 import logging
 import sys
-import uuid
 from contextvars import ContextVar
 from typing import Any
+
+from app.core.ids import log_request_id
 
 # request_id for the in-flight HTTP request, bound by RequestContextMiddleware.
 request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
@@ -26,10 +27,24 @@ FORBIDDEN_CONTEXT_KEYS: frozenset[str] = frozenset(
     {"content", "message", "text", "email", "phone", "body", "token", "prompt", "query"}
 )
 
+# Top-level record keys that context must not override.
+_RESERVED_CONTEXT_KEYS: frozenset[str] = frozenset({"ts", "level", "logger", "event"})
+
+
+def _reject_unsafe_context(value: object) -> None:
+    """Recursively reject forbidden keys anywhere in the context tree."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key in FORBIDDEN_CONTEXT_KEYS:
+                raise ValueError(f"forbidden field in log context: {key!r}")
+            _reject_unsafe_context(item)
+    elif isinstance(value, list | tuple):
+        for item in value:
+            _reject_unsafe_context(item)
+
 
 def new_request_id() -> str:
-    # ULID prefixes arrive in Phase 1 (app/core/ids.py); a prefixed uuid suffices for the skeleton.
-    return f"rid_{uuid.uuid4().hex}"
+    return log_request_id()
 
 
 class JsonFormatter(logging.Formatter):
@@ -51,9 +66,10 @@ class JsonFormatter(logging.Formatter):
         if context is not None:
             if not isinstance(context, dict):
                 raise TypeError("log 'context' must be a dict of scalar identifiers")
-            leaked = FORBIDDEN_CONTEXT_KEYS.intersection(context)
-            if leaked:
-                raise ValueError(f"forbidden field(s) in log context: {sorted(leaked)}")
+            reserved = _RESERVED_CONTEXT_KEYS.intersection(context)
+            if reserved:
+                raise ValueError(f"log context may not override reserved keys: {sorted(reserved)}")
+            _reject_unsafe_context(context)
             payload.update(context)
 
         if record.exc_info:
