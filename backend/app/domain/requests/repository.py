@@ -127,6 +127,15 @@ class RequestRepository:
             {"_id": request_id}, {"$set": {"last_delivery_error": error_code}}
         )
 
+    async def reset_for_redelivery(self, request_id: str) -> bool:
+        """Admin redeliver: move a parked (delivery_failed) request back to received
+        so a fresh delivery job can be enqueued. Returns whether one was reset."""
+        result = await self._collection.update_one(
+            {"_id": request_id, "status": "delivery_failed"},
+            {"$set": {"status": "received", "last_delivery_error": None}},
+        )
+        return result.modified_count > 0
+
     # --- Read-only admin queries ---
 
     async def total(self) -> int:

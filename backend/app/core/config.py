@@ -98,9 +98,13 @@ class Settings(BaseSettings):
     # the delivery sweep (its job crashed/timed-out, or its enqueue was lost).
     delivery_stuck_seconds: int = 900
 
-    # --- Admin (used from Phase 7) ---
+    # --- Admin (Phase 7; V1 adds an optional read-only viewer role) ---
     admin_username: str = "admin"
     admin_password: SecretStr = SecretStr("dev-only-change-me")
+    # Optional read-only viewer login (dev stub for the V1 role model; a real IdP
+    # replaces this). Empty password = viewer login disabled.
+    viewer_username: str = "viewer"
+    viewer_password: SecretStr = SecretStr("")
 
     # --- Widget dev origins ---
     cors_origins: str = _DEFAULT_CORS
@@ -108,7 +112,8 @@ class Settings(BaseSettings):
     # --- Feature flags (V1 surfaces dark-launched OFF; enable per environment) ---
     enable_delivery: bool = False  # V4: external request delivery worker
     enable_citations: bool = False  # V7: citation display on grounded answers
-    enable_admin_roles: bool = False  # V5: admin/viewer role enforcement
+    # Note: admin/viewer roles are always enforced (fail-secure, not flag-gated);
+    # the read-only viewer login is controlled solely by VIEWER_PASSWORD above.
 
     @property
     def cors_origin_list(self) -> list[str]:
@@ -119,7 +124,6 @@ class Settings(BaseSettings):
         return {
             "delivery": self.enable_delivery,
             "citations": self.enable_citations,
-            "admin_roles": self.enable_admin_roles,
         }
 
     @property
@@ -151,6 +155,11 @@ class Settings(BaseSettings):
             problems.append("SESSION_SECRET (placeholder or empty)")
         if self.admin_password.get_secret_value().strip() in ("", _INSECURE_DEFAULT):
             problems.append("ADMIN_PASSWORD (placeholder or empty)")
+        # The viewer login is optional (empty = disabled), but if one IS set it must
+        # be a real secret — a placeholder viewer password grants read access to every
+        # transcript, so the fail-closed guard must cover it too (not just admin).
+        if self.viewer_password.get_secret_value().strip() == _INSECURE_DEFAULT:
+            problems.append("VIEWER_PASSWORD (placeholder — set a real value or leave empty)")
         if not self.openai_api_key.get_secret_value().strip():
             problems.append("OPENAI_API_KEY (unset)")
         if not self.openai_vector_store_id.strip():

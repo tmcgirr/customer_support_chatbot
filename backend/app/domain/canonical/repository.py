@@ -57,6 +57,13 @@ class CanonicalAnswerRepository:
         )
         return CanonicalAnswer.model_validate(result)
 
+    async def get(self, intent: str) -> CanonicalAnswer | None:
+        """Return the canonical answer for ``intent`` at ANY status (unlike
+        ``get_canonical_answer``, which only returns approved). Used by the admin
+        approve action to validate a draft exists *before* auditing/mutating."""
+        doc = await self._collection.find_one({"intent": intent})
+        return CanonicalAnswer.model_validate(doc) if doc else None
+
     async def approve(self, intent: str) -> bool:
         """Promote the draft canonical answer for ``intent`` to approved (the admin
         approval action, contracts §4). Returns whether a draft was promoted."""

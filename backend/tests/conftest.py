@@ -4,6 +4,8 @@ import os
 # Settings at import): env now defaults to "prod", whose secret guard would
 # otherwise reject the in-repo default secrets used in tests.
 os.environ["ENV"] = "dev"
+# Enable a read-only viewer login so the role tests can authenticate as one.
+os.environ.setdefault("VIEWER_PASSWORD", "viewer-pass")
 
 import httpx  # noqa: E402
 import pytest  # noqa: E402

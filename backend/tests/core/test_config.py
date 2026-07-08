@@ -33,7 +33,7 @@ def test_key_ring_active_key_wins_over_extra() -> None:
 
 def test_feature_flags_default_off() -> None:
     settings = Settings(_env_file=None, env="dev")
-    assert settings.feature_flags == {"delivery": False, "citations": False, "admin_roles": False}
+    assert settings.feature_flags == {"delivery": False, "citations": False}
 
 
 def test_feature_flags_env_override() -> None:

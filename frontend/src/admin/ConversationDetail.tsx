@@ -1,15 +1,24 @@
-import type { AdminClient } from "./api";
+import { useState } from "react";
+
+import type { AdminClient, AdminRole, RevealedConversation } from "./api";
+import { useAdminAction } from "./useAdminAction";
 import { useAdminQuery } from "./useAdminQuery";
 
 export default function ConversationDetail({
   id,
   client,
+  role,
   onAuthError,
 }: {
   id: string;
   client: AdminClient;
+  role: AdminRole;
   onAuthError: () => void;
 }) {
+  const [revealed, setRevealed] = useState<RevealedConversation | null>(null);
+  const isAdmin = role === "admin";
+  const { error: actionError, busy, run } = useAdminAction();
+
   const { data, loading, error } = useAdminQuery(
     () => client.getConversation(id),
     onAuthError,
@@ -20,12 +29,41 @@ export default function ConversationDetail({
   if (error) return <p className="admin-error">{error}</p>;
   if (!data) return null;
 
+  function handleReveal() {
+    run(
+      "Reason for revealing this transcript (audited):",
+      (reason) => client.revealConversation(id, reason),
+      (result) => setRevealed(result),
+    );
+  }
+
+  // Normalize revealed messages to the same display shape (they carry no status).
+  const rows = revealed
+    ? revealed.messages.map((m) => ({
+        id: m.id,
+        role: m.role,
+        content: m.content,
+        status: "—",
+        created_at: m.created_at,
+      }))
+    : data.messages;
+
   return (
     <div>
       <h2>Conversation {data.conversation_id}</h2>
       <p className="admin-muted">
         Status: {data.status} · Outcome: {data.outcome ?? "—"} · Started: {data.started_at}
       </p>
+
+      {isAdmin && !revealed && (
+        <p>
+          <button type="button" className="admin-link" disabled={busy} onClick={handleReveal}>
+            Reveal transcript
+          </button>
+        </p>
+      )}
+      {revealed && <p className="admin-muted">Showing unmasked transcript.</p>}
+      {actionError && <p className="admin-error">{actionError}</p>}
 
       <table className="admin-table">
         <thead>
@@ -37,14 +75,14 @@ export default function ConversationDetail({
           </tr>
         </thead>
         <tbody>
-          {data.messages.length === 0 ? (
+          {rows.length === 0 ? (
             <tr>
               <td colSpan={4} className="admin-muted">
                 No messages.
               </td>
             </tr>
           ) : (
-            data.messages.map((m) => (
+            rows.map((m) => (
               <tr key={m.id}>
                 <td>{m.role}</td>
                 <td className="admin-content">{m.content}</td>

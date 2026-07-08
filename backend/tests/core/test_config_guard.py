@@ -41,6 +41,9 @@ def test_invalid_env_rejected() -> None:
     [
         ("session_secret", SecretStr("dev-only-change-me"), "SESSION_SECRET"),
         ("admin_password", SecretStr("dev-only-change-me"), "ADMIN_PASSWORD"),
+        # A set-but-placeholder viewer login would grant read access to every
+        # transcript in prod, so the guard must reject it too (empty is fine below).
+        ("viewer_password", SecretStr("dev-only-change-me"), "VIEWER_PASSWORD"),
         ("openai_api_key", SecretStr(""), "OPENAI_API_KEY"),
         ("openai_vector_store_id", "", "OPENAI_VECTOR_STORE_ID"),
         ("mongo_uri", SecretStr("mongodb://localhost:27017/cadre_chatbot"), "MONGO_URI"),
@@ -50,6 +53,15 @@ def test_invalid_env_rejected() -> None:
 def test_prod_rejects_missing_or_default_input(field: str, value: object, needle: str) -> None:
     with pytest.raises((ValueError, SettingsError), match=needle):
         _build(**{**_PROD, field: value})
+
+
+def test_prod_allows_empty_viewer_password() -> None:
+    # Empty VIEWER_PASSWORD = viewer login disabled; a valid prod config.
+    assert _build(**{**_PROD, "viewer_password": SecretStr("")}).env == "prod"
+
+
+def test_prod_accepts_real_viewer_password() -> None:
+    assert _build(**{**_PROD, "viewer_password": SecretStr("real-viewer-pw")}).env == "prod"
 
 
 def test_staging_is_also_validated() -> None:

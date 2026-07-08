@@ -10,6 +10,7 @@ from app.agent.tools import ToolRegistry
 from app.core.config import get_settings
 from app.core.errors import AppError, ErrorCode
 from app.core.security import SessionClaims, verify_session_token
+from app.domain.audit.repository import AuditRepository
 from app.domain.canonical.repository import CanonicalAnswerRepository
 from app.domain.conversations.repository import ConversationRepository
 from app.domain.feedback.repository import FeedbackRepository
@@ -43,6 +44,10 @@ def get_job_repository(request: Request) -> JobRepository:
     return JobRepository(request.app.state.db["jobs"])
 
 
+def get_audit_repository(request: Request) -> AuditRepository:
+    return AuditRepository(request.app.state.db["audit"])
+
+
 def get_feedback_repository(request: Request) -> FeedbackRepository:
     return FeedbackRepository(request.app.state.db["feedback"])
 
@@ -57,6 +62,8 @@ def get_knowledge_search(request: Request) -> KnowledgeSearch:
 
 RepoDep = Annotated[ConversationRepository, Depends(get_conversation_repository)]
 RateLimiterDep = Annotated[RateLimitRepository, Depends(get_rate_limiter)]
+JobRepoDep = Annotated[JobRepository, Depends(get_job_repository)]
+AuditRepoDep = Annotated[AuditRepository, Depends(get_audit_repository)]
 CanonicalRepoDep = Annotated[CanonicalAnswerRepository, Depends(get_canonical_repository)]
 RequestRepoDep = Annotated[RequestRepository, Depends(get_request_repository)]
 FeedbackRepoDep = Annotated[FeedbackRepository, Depends(get_feedback_repository)]
@@ -89,9 +96,6 @@ def get_orchestrator(
 
 
 OrchestratorDep = Annotated[ChatOrchestrator, Depends(get_orchestrator)]
-
-
-JobRepoDep = Annotated[JobRepository, Depends(get_job_repository)]
 
 
 def get_request_service(

@@ -1,14 +1,16 @@
 import { useState } from "react";
 
-import type { AdminClient } from "./api";
+import type { AdminClient, AdminRole } from "./api";
 import ConversationDetail from "./ConversationDetail";
 import { useAdminQuery } from "./useAdminQuery";
 
 export default function Conversations({
   client,
+  role,
   onAuthError,
 }: {
   client: AdminClient;
+  role: AdminRole;
   onAuthError: () => void;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -24,7 +26,12 @@ export default function Conversations({
         <button type="button" className="admin-link" onClick={() => setSelectedId(null)}>
           ← Back to conversations
         </button>
-        <ConversationDetail id={selectedId} client={client} onAuthError={onAuthError} />
+        <ConversationDetail
+          id={selectedId}
+          client={client}
+          role={role}
+          onAuthError={onAuthError}
+        />
       </div>
     );
   }

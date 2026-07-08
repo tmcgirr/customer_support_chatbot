@@ -8,6 +8,7 @@ from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection
 
 from app.api.deps import (
     get_adapter,
+    get_audit_repository,
     get_canonical_repository,
     get_conversation_repository,
     get_feedback_repository,
@@ -17,6 +18,8 @@ from app.api.deps import (
     get_request_repository,
 )
 from app.core.config import get_settings
+from app.domain.audit.repository import AuditRepository
+from app.domain.audit.repository import ensure_indexes as ensure_audit
 from app.domain.canonical.repository import CanonicalAnswerRepository
 from app.domain.canonical.repository import ensure_indexes as ensure_canonical
 from app.domain.conversations.repository import ConversationRepository, ensure_indexes
@@ -92,6 +95,13 @@ async def jobs_collection() -> AsyncIterator[Collection]:
 
 
 @pytest.fixture
+async def audit_collection() -> AsyncIterator[Collection]:
+    async for coll in _fresh_collection("audit"):
+        await ensure_audit(coll)
+        yield coll
+
+
+@pytest.fixture
 def fake_adapter() -> FakeAdapter:
     return FakeAdapter.replying(DEFAULT_REPLY)
 
@@ -109,6 +119,7 @@ async def client(
     feedback_collection: Collection,
     ratelimit_collection: Collection,
     jobs_collection: Collection,
+    audit_collection: Collection,
     fake_adapter: FakeAdapter,
     fake_knowledge: FakeKnowledgeSearch,
 ) -> AsyncIterator[httpx.AsyncClient]:
@@ -118,12 +129,14 @@ async def client(
     feedback_repo = FeedbackRepository(feedback_collection)
     rate_limiter = RateLimitRepository(ratelimit_collection, secret="test-secret")
     job_repo = JobRepository(jobs_collection)
+    audit_repo = AuditRepository(audit_collection)
     app.dependency_overrides[get_conversation_repository] = lambda: conversation_repo
     app.dependency_overrides[get_canonical_repository] = lambda: canonical_repo
     app.dependency_overrides[get_request_repository] = lambda: request_repo
     app.dependency_overrides[get_feedback_repository] = lambda: feedback_repo
     app.dependency_overrides[get_rate_limiter] = lambda: rate_limiter
     app.dependency_overrides[get_job_repository] = lambda: job_repo
+    app.dependency_overrides[get_audit_repository] = lambda: audit_repo
     app.dependency_overrides[get_adapter] = lambda: fake_adapter
     app.dependency_overrides[get_knowledge_search] = lambda: fake_knowledge
     transport = ASGITransport(app=app)

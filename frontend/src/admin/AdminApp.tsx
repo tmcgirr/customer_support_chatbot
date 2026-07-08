@@ -1,18 +1,28 @@
 import { useMemo, useState } from "react";
 
-import { AdminAuthError, createAdminClient, type AdminClient, type AdminCreds } from "./api";
+import {
+  AdminAuthError,
+  createAdminClient,
+  type AdminClient,
+  type AdminCreds,
+  type MeResponse,
+} from "./api";
+import Audit from "./Audit";
 import Conversations from "./Conversations";
 import Dashboard from "./Dashboard";
+import Knowledge from "./Knowledge";
 import Requests from "./Requests";
 import Unresolved from "./Unresolved";
 
-type Tab = "dashboard" | "conversations" | "requests" | "unresolved";
+type Tab = "dashboard" | "conversations" | "requests" | "knowledge" | "unresolved" | "audit";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "dashboard", label: "Dashboard" },
   { id: "conversations", label: "Conversations" },
   { id: "requests", label: "Requests" },
+  { id: "knowledge", label: "Knowledge" },
   { id: "unresolved", label: "Unresolved" },
+  { id: "audit", label: "Audit" },
 ];
 
 function Login({ onAuthenticate }: { onAuthenticate: (creds: AdminCreds) => Promise<void> }) {
@@ -69,7 +79,15 @@ function Login({ onAuthenticate }: { onAuthenticate: (creds: AdminCreds) => Prom
   );
 }
 
-function Shell({ client, onSignOut }: { client: AdminClient; onSignOut: () => void }) {
+function Shell({
+  client,
+  me,
+  onSignOut,
+}: {
+  client: AdminClient;
+  me: MeResponse;
+  onSignOut: () => void;
+}) {
   const [tab, setTab] = useState<Tab>("dashboard");
   // Remount a view when re-selected so it re-fetches fresh data.
   const [nonce, setNonce] = useState(0);
@@ -80,6 +98,7 @@ function Shell({ client, onSignOut }: { client: AdminClient; onSignOut: () => vo
   }
 
   const viewKey = `${tab}-${nonce}`;
+  const role = me.role;
 
   return (
     <div className="admin-shell">
@@ -97,6 +116,9 @@ function Shell({ client, onSignOut }: { client: AdminClient; onSignOut: () => vo
             </button>
           ))}
         </nav>
+        <span className="admin-whoami">
+          {me.username} ({role})
+        </span>
         <button type="button" className="admin-signout" onClick={onSignOut}>
           Sign out
         </button>
@@ -107,34 +129,48 @@ function Shell({ client, onSignOut }: { client: AdminClient; onSignOut: () => vo
           <Dashboard key={viewKey} client={client} onAuthError={onSignOut} />
         )}
         {tab === "conversations" && (
-          <Conversations key={viewKey} client={client} onAuthError={onSignOut} />
+          <Conversations key={viewKey} client={client} role={role} onAuthError={onSignOut} />
         )}
-        {tab === "requests" && <Requests key={viewKey} client={client} onAuthError={onSignOut} />}
+        {tab === "requests" && (
+          <Requests key={viewKey} client={client} role={role} onAuthError={onSignOut} />
+        )}
+        {tab === "knowledge" && (
+          <Knowledge key={viewKey} client={client} role={role} onAuthError={onSignOut} />
+        )}
         {tab === "unresolved" && (
           <Unresolved key={viewKey} client={client} onAuthError={onSignOut} />
         )}
+        {tab === "audit" && <Audit key={viewKey} client={client} onAuthError={onSignOut} />}
       </main>
     </div>
   );
 }
 
 export default function AdminApp() {
-  // Credentials live only in memory (never localStorage).
+  // Credentials + identity live only in memory (never localStorage).
   const [creds, setCreds] = useState<AdminCreds | null>(null);
+  const [me, setMe] = useState<MeResponse | null>(null);
 
   const client = useMemo(() => (creds ? createAdminClient(creds) : null), [creds]);
 
   async function authenticate(candidate: AdminCreds) {
-    // Verify by making one authenticated call; a 401 throws AdminAuthError,
-    // which Login surfaces as "Invalid admin credentials."
+    // Verify by calling /me; a 401 throws AdminAuthError (surfaced by Login as
+    // "Invalid admin credentials.") and the response gives us the role so we
+    // can gate admin-only actions.
     const probe = createAdminClient(candidate);
-    await probe.getDashboard();
+    const identity = await probe.getMe();
+    setMe(identity);
     setCreds(candidate);
   }
 
-  if (!creds || !client) {
+  function signOut() {
+    setCreds(null);
+    setMe(null);
+  }
+
+  if (!creds || !client || !me) {
     return <Login onAuthenticate={authenticate} />;
   }
 
-  return <Shell client={client} onSignOut={() => setCreds(null)} />;
+  return <Shell client={client} me={me} onSignOut={signOut} />;
 }

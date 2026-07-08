@@ -54,6 +54,12 @@ body {
   color: #fff;
 }
 
+.admin-whoami {
+  font-size: 13px;
+  color: #556;
+  white-space: nowrap;
+}
+
 .admin-signout {
   border: 1px solid #c0c4ca;
   background: #fff;
@@ -253,4 +259,30 @@ table {
   cursor: pointer;
   padding: 0 0 12px;
   font-size: 14px;
+}
+
+.admin-link:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Action buttons sitting inside a table cell should not carry the "back link"
+   bottom padding, and adjacent buttons need a little breathing room. */
+.admin-table .admin-link {
+  padding: 2px 0;
+  margin-right: 12px;
+}
+
+/* Inline reveal (unmasked contact / transcript details). */
+.admin-reveal-row td {
+  background: #f6f8fb;
+}
+
+.admin-reveal {
+  font-size: 13px;
+}
+
+.admin-reveal-fields {
+  margin: 6px 0 0;
+  padding-left: 18px;
 }
