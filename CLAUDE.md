@@ -17,7 +17,7 @@ uv run ruff check . && uv run ruff format --check .
 uv run mypy app/
 
 # Frontend (from frontend/)
-pnpm install && pnpm dev         # widget dev server (port 5173)
+pnpm install && pnpm dev         # widget dev server (port 5273)
 pnpm build && pnpm test
 
 # Infra

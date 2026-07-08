@@ -8,7 +8,7 @@
  *     data-cadre-src="https://widget.cadre.example"></script>
  *
  * It creates a fixed, bottom-right iframe pointing at `data-cadre-src` (default
- * "http://localhost:5173" for local dev) and resizes it in response to the
+ * "http://localhost:5273" for local dev) and resizes it in response to the
  * widget's own postMessage events (widget.open / widget.close / widget.resize).
  *
  * Security: every inbound message is validated against the widget's exact origin
@@ -18,7 +18,7 @@
   "use strict";
 
   var script = document.currentScript;
-  var WIDGET_SRC = (script && script.getAttribute("data-cadre-src")) || "http://localhost:5173";
+  var WIDGET_SRC = (script && script.getAttribute("data-cadre-src")) || "http://localhost:5273";
   var WIDGET_ORIGIN = new URL(WIDGET_SRC, window.location.href).origin;
 
   // Collapsed footprint (just the round launcher + its margin) and the expanded

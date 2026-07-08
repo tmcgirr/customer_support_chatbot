@@ -57,7 +57,7 @@ class Settings(BaseSettings):
     admin_password: SecretStr = SecretStr("dev-only-change-me")
 
     # --- Widget dev origins ---
-    cors_origins: str = "http://localhost:5173"
+    cors_origins: str = "http://localhost:5273"
 
     @property
     def cors_origin_list(self) -> list[str]:

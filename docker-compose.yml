@@ -1,5 +1,5 @@
 # Local dev uses ONLY the mongo service: `docker compose up -d mongo`. The app
-# itself runs on the host via `uvicorn` (:8000) and `pnpm dev` (:5173), so the
+# itself runs on the host via `uvicorn` (:8000) and `pnpm dev` (:5273), so the
 # dockerized api is NOT started by default — it lives behind the `full` profile
 # and maps to :8080 so it never clashes with a local uvicorn on :8000.
 #
@@ -20,7 +20,7 @@ services:
       - "8080:8000"
     environment:
       MONGO_URI: mongodb://mongo:27017/cadre_chatbot
-      CORS_ORIGINS: http://localhost:5173
+      CORS_ORIGINS: http://localhost:5273
     depends_on:
       - mongo
 
