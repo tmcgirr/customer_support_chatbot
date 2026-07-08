@@ -1,92 +1,150 @@
-# CLAUDE.md — Cadre AI Support Chatbot
+# CLAUDE.md — Cadre AI Support Chatbot (V1)
 
 Public-facing customer support chatbot for Cadre AI (an AI strategy consultancy).
 FastAPI backend + React chat widget (iframe) + MongoDB + OpenAI Responses API.
-Full design docs live in `docs/` — the API/data contracts are in
-`docs/04_API_and_Data_Contracts.md` and are authoritative. Execution phases are in `plan.md`.
+
+**V1 makes the shipped POC production-grade and operable for public use** — without
+changing the model trust boundary (the model stays read-only; authenticated clients,
+tenancy, and private stores remain V2). V1 adds: production-approved content with an
+approval lifecycle, **external delivery of requests via a background worker**,
+role-controlled admin with **audit**, **retention/deletion operations**, versioned
+prompts/model with fallback, and **separate staging/production** environments.
+
+Authoritative docs (`docs/`): V1 scope is `docs/02_Release_Capability_Plan.md` §4 and
+the **P1** items in `docs/06_Backlog_and_Delivery_Plan.md`; the V1 exit bar is doc 02 §8
+"V1 public gate". API/data contracts are `docs/04_API_and_Data_Contracts.md`;
+architecture/ADRs `docs/03`; content + golden set `docs/05`. Execution phases: `plan.md`.
+POC history: `docs/archive/{CLAUDE_POC,plan_POC}.md`, `docs/POC_EXIT_REPORT.md`,
+`docs/DECISIONS_LOG.md`. Ongoing decisions with owners: doc 06 §6.
 
 ## Commands
 
 ```bash
 # Backend (from backend/)
-uv sync                          # install deps
+uv sync
 uv run uvicorn app.main:app --reload --port 8000
-uv run pytest                    # unit + integration tests
-uv run pytest tests/test_turn_loop.py -x   # fastest signal on the core path
+uv run python -m app.worker           # V1: dedicated background worker (delivery/retention/aggregates)
+uv run pytest                          # unit + integration tests
+uv run pytest tests/integration/test_chat.py -x   # fastest signal on the core turn/stream path
 uv run ruff check . && uv run ruff format --check .
 uv run mypy app/
 
 # Frontend (from frontend/)
-pnpm install && pnpm dev         # widget dev server (port 5273)
+pnpm install && pnpm dev               # widget (:5273) + admin (admin.html)
 pnpm build && pnpm test
 
 # Infra
-docker compose up -d mongo       # local dev: MongoDB only (app runs via uvicorn/pnpm above)
-# docker compose --profile full up --build   # full dockerized stack; api on :8080 (deploy shape)
-uv run python scripts/seed_canonical.py     # seed canonical answers
-uv run python scripts/upload_knowledge.py   # push docs/knowledge/ to Vector Store
+docker compose up -d mongo             # local dev: MongoDB only (app + worker run via the commands above)
+# docker compose --profile full up --build   # full dockerized stack
 
-# Golden evaluation set — MUST pass before any prompt/model/canonical change is committed
-uv run python -m eval.run        # runs eval/golden_set.yaml against the orchestrator
+# Data / content scripts (from backend/)
+uv run python scripts/seed_canonical.py       # canonical answers (draft → approve lifecycle in V1)
+uv run python scripts/upload_knowledge.py     # push docs/knowledge/ to a Vector Store (staging or prod)
+uv run python scripts/sweep_locks.py          # release leaked run locks (also a scheduled worker job in V1)
+
+# Golden evaluation set — the release GATE. MUST pass on the TARGET config before a
+# prompt/model/canonical/content change is promoted (staging → production).
+uv run python -m eval.run                     # real model gate (spends API $)
+uv run python -m eval.run --show              # + print each case's response text + routed intent
 ```
 
 ## Architecture invariants (do not violate)
+
+These hold from the POC and remain load-bearing in V1:
 
 1. **MongoDB is the single source of truth for conversation history.** Model calls are
    stateless: build the window from the conversation document and call the Responses API
    through `app/agent/adapter.py`. NEVER create or reference OpenAI Conversation objects.
 2. **The model is read-only.** Its only tools are `search_knowledge`,
    `get_canonical_answer`, `get_portal_information`. NEVER register a tool that writes,
-   sends, or submits anything. Side effects happen only via `POST /api/v1/requests`,
-   called by the browser after user confirmation.
+   sends, or submits anything. Side effects happen only via `POST /api/v1/requests`
+   (browser, after user confirmation) and the delivery worker (invariant 11).
 3. **One atomic turn operation.** Run lock + user-message append + duplicate check +
-   message cap are enforced in a single `findOneAndUpdate` on the conversation document
-   (see `docs/03_Architecture_and_Decision_Records.md` §3.1). Never add a second lock
-   mechanism or a separate messages collection.
-4. **Provider isolation.** OpenAI types, IDs, and errors never leave `app/agent/adapter.py`.
-   Everything downstream sees normalized `StreamEvent`, `Usage`, `AdapterError`.
-5. **No PII or message content in logs.** Log structured events with IDs only
-   (`conversation_id`, `request_id`, `error_code`). Never log message text, emails,
-   tool payloads, or tokens. This applies to exceptions too — sanitize before raising.
-6. **Public API returns local IDs only** (`cnv_`, `msg_`, `req_`…, ULID-based via
-   `app/core/ids.py`). Never expose OpenAI file/store IDs or Mongo internals.
-7. **Idempotency everywhere writes happen:** `client_message_id` for messages,
-   `Idempotency-Key` for requests. Duplicates replay the original result, never error blindly.
+   message cap in a single `findOneAndUpdate` (docs 03 §3.1). A live turn heartbeats its
+   lock; a leaked lock is swept. Never add a second lock mechanism or a messages collection.
+4. **Provider isolation.** OpenAI types/IDs/errors never leave `app/agent/adapter.py`.
+   The SAME rule applies to every external system in V1: CRM/scheduler and ticketing SDKs,
+   IDs, and errors never leave their adapter in `app/domain/delivery/`. Downstream sees
+   normalized types only.
+5. **No PII or message content in logs.** Structured events with IDs only. Applies to
+   exceptions and to the worker/delivery paths. Event messages are static; a static AST
+   scan + the runtime formatter guard enforce it (`tests/core/test_log_hygiene.py`).
+6. **Public API returns local IDs only** (`cnv_`, `msg_`, `req_`… ULID via
+   `app/core/ids.py`). Never expose OpenAI file/store IDs, external CRM/ticket IDs, or
+   Mongo internals. External references are stored and shown ONLY in the audited admin.
+7. **Idempotency everywhere writes happen:** `client_message_id` (messages),
+   `Idempotency-Key` (requests, per conversation), and **idempotent delivery jobs** (an
+   external system is called at most once per request; retries replay, never double-send).
 8. **Canonical answers win.** Pricing, security/compliance, AI Maturity Index, portal,
-   case studies, and client-relationship questions must come from `canonical_answers`,
-   never generated. Unsupported questions escalate — the bot never guesses.
+   case studies, and client-relationship questions come from `canonical_answers`, never
+   generated. In V1 canonical/content moves through a **draft → approved** lifecycle and is
+   promoted from staging; only `approved` records are served. Unsupported questions escalate.
 9. Session auth is a stateless HMAC token (`app/core/security.py`). No session collection.
-10. Error responses use the fixed code list in contracts §6. Add codes to the enum;
-    never return raw exceptions or provider messages to clients.
+10. Error responses use the fixed code list in contracts §6 — never raw exceptions or
+    provider messages. Add codes to the enum.
+
+**V1 additions (new trust-boundary rules):**
+
+11. **External delivery is asynchronous and worker-owned.** A request is persisted locally
+    first (unchanged), then a dedicated worker delivers it via `app/domain/delivery/` with
+    **bounded retries → dead-letter**, storing the external reference and surfacing failures
+    in admin. The model never delivers; the request handler never delivers inline. Ambiguous
+    outcomes are resolved by the job, **never by re-prompting the user**.
+12. **Admin is role-controlled: `admin` and `viewer`** (via the production identity
+    provider). Masking is the default. **Every PII reveal/export requires a reason and
+    writes an append-only audit record** (`app/domain/audit/`); content and deletion actions
+    are audited too.
+13. **Data lifecycle is job-driven and verified.** Retention classes/periods are enforced by
+    scheduled worker jobs; deletion requests are verified, then execute single-store deletion
+    plus documented provider-retention terms. No ad-hoc deletes on the request path.
+14. **Staging and production are separate** (separate MongoDB, OpenAI project, and Vector
+    Store). Approved content, prompts, and model config are **promoted**, never edited
+    directly in production; the golden set gates every promotion.
+15. **Prompts and model configuration are versioned.** Changing either requires the golden
+    gate to pass on the target config; an approved fallback model is configured.
 
 ## Code conventions
 
-- Python 3.12, full type hints, Pydantic v2 models for every API body and Mongo document.
-- Async throughout the request path (`motor`/async driver); no blocking calls in handlers.
-- Routes → domain services → repositories. Routes NEVER touch Mongo directly.
-- Repo layout: `backend/app/{api,core,domain,agent,jobs}`, `backend/eval/`,
-  `frontend/src/`, `docs/`, `scripts/`.
-- Tests mirror `app/` structure. Mock the adapter at its boundary (`FakeAdapter` in
-  `tests/fakes.py`) — never mock OpenAI's SDK internals, never call the real API in tests.
-- Frontend: React + TypeScript + Vite. The widget must run inside an iframe; communicate
-  with the host page only via origin-checked `postMessage`. No localStorage for anything
-  sensitive; drafts live in component state.
-- Config only via `app/core/config.py` (pydantic-settings). Never read `os.environ` elsewhere.
-- Conventional commits; one phase checkpoint per commit (see plan.md).
+- Python 3.12, full type hints, Pydantic v2 for every API body, Mongo document, and job payload.
+- Async throughout the request path (`motor`); no blocking calls in handlers or the worker loop.
+- Routes → domain services → repositories. Routes NEVER touch Mongo directly. The worker uses
+  the same repositories/services — no duplicated data access.
+- Repo layout: today `backend/app/{api,core,domain,agent}`; V1 adds `app/jobs/` (worker +
+  job model), `app/domain/{delivery,audit,retention}`, and the worker entrypoint
+  `app/worker.py`. Also `backend/eval/`, `frontend/src/` (widget + `src/admin/`), `docs/`,
+  `scripts/`. Job/privacy-request schemas + indexes are already specified in contracts §7–8.
+- Tests mirror `app/`. Mock the model adapter at its boundary (`FakeAdapter`) and delivery
+  adapters at theirs (`FakeDeliveryClient`) — never mock SDK internals, never call a real
+  external API (model, CRM, ticketing) in tests. Delivery jobs get failure-path tests
+  (retry, dead-letter, replay) — a V1 gate requirement.
+- Frontend: React + TS + Vite. Widget runs in an iframe; host page communication only via
+  origin-checked `postMessage`. Admin is a separate entry (`admin.html`). No `localStorage`
+  for anything sensitive; admin creds/tokens in memory only.
+- Config only via `app/core/config.py` (pydantic-settings). Never read `os.environ`
+  elsewhere. `ENV` defaults to `prod` (fail-closed); non-dev refuses default secrets.
+- Conventional commits; one phase checkpoint per commit (see `plan.md`).
 
 ## Content rules (mirror the prompt, enforce in code review)
 
-The bot must never state prices, certifications, client names, SLAs, timelines, or
-AI Maturity methodology; never request credentials; never confirm whether someone is a
-client. These are covered by `eval/golden_set.yaml` — if you touch
-`app/agent/prompts/` or canonical seeds, run `python -m eval.run` and include the
-result in your summary.
+The bot must never state prices, certifications, client names, SLAs, timelines, or AI
+Maturity methodology; never request credentials; never confirm whether someone is a client.
+Covered by `eval/golden_set.yaml`. If you touch `app/agent/prompts/`, canonical seeds, or
+approved content, run `python -m eval.run` on the target config and include the result.
+`must_use_canonical` is a hard gate only for the mandatory-canonical topics (invariant 8);
+general topics (company/service/industry) assert safety, not a specific route.
 
 ## Working style
 
-- Follow `plan.md` phase by phase. At each ✅ CHECKPOINT: run the listed verification,
-  fix failures, commit, then STOP and summarize before starting the next phase.
-- When a decision isn't covered by the docs, choose the simplest option consistent with
-  the invariants above and note it in `docs/DECISIONS_LOG.md`.
-- Prefer editing existing files over creating parallel versions. No `_v2` files.
+- Follow `plan.md` phase by phase. At each ✅ CHECKPOINT: run the listed verification, fix
+  failures, commit, then STOP and summarize before the next phase.
+- **V1 has external dependencies.** Some phases block on decisions owned outside engineering
+  (destinations, identity provider, legal/retention wording — doc 06 §6). Work unblocked
+  phases; for a blocked one, build against the interface with a fake/placeholder and flag the
+  decision. Content approval is a **parallel track from day one** (longer lead time than code).
+- Every feature's definition of done includes: behavior per contract, safe errors, no
+  PII/secrets in logs, config documented, **demonstrable on the deployed (staging) env**,
+  golden set green where applicable, and failure paths tested for anything that delivers.
+- When a decision isn't covered by the docs, choose the simplest option consistent with the
+  invariants and note it in `docs/DECISIONS_LOG.md`.
+- Prefer editing existing files over parallel versions. No `_v2` files.
 - When debugging: reproduce with a failing test first, then fix, keep the test.

@@ -1,222 +1,260 @@
-# plan.md — Cadre AI Support Chatbot (POC build)
+# plan.md — Cadre AI Support Chatbot (V1 build)
 
-Execute phases **in order**. Each phase ends with a ✅ CHECKPOINT: run the verification,
-fix anything red, commit with the listed message, then stop and summarize before
-continuing. Phases marked ⚡ contain tasks safe to parallelize with subagents because
-they touch disjoint files against already-frozen contracts.
+V1 makes the shipped POC **safe, reliable, and operable for public use**. It builds ON the
+committed POC (phases 0–8, `docs/archive/plan_POC.md`) — do not rebuild that; extend it.
 
-Authoritative references: `docs/04_API_and_Data_Contracts.md` (schemas, endpoints,
-errors), `docs/03_Architecture_and_Decision_Records.md` §3.1 (turn loop),
-`docs/05_Conversation_and_Content_Specification.md` (content + golden set).
+Execute phases **in order**. Each ends with a ✅ CHECKPOINT: run the verification, fix
+anything red, commit with the listed message, then stop and summarize before continuing.
+Phases marked ⚡ contain subtasks safe to parallelize with subagents (disjoint files,
+frozen contracts). The exit bar is the **V1 public gate** (doc 02 §8), realized in Phase V8.
 
----
+Authoritative references: V1 scope `docs/02_Release_Capability_Plan.md` §4 + the **P1**
+items in `docs/06_Backlog_and_Delivery_Plan.md`; contracts `docs/04`; architecture/ADRs
+`docs/03`; content + golden set `docs/05`; invariants `CLAUDE.md`.
 
-## Phase 0 — Scaffold and walking skeleton
+## Blocking decisions (doc 06 §6 — need owners; start these now, in parallel)
 
-Goal: prove the full pipe (browser → FastAPI → SSE stream → browser) with real
-infrastructure shape before writing features. Deployment risk dies here, not in Phase 8.
+V1 depends on inputs owned outside engineering. For a blocked phase, **build against the
+interface with a fake/placeholder and flag the decision** — do not stall the whole track.
 
-1. Create repo layout per CLAUDE.md: `backend/` (uv project, FastAPI, ruff, mypy,
-   pytest config), `frontend/` (Vite + React + TS), `docker-compose.yml` (mongo:7),
-   `scripts/`, `eval/`, `.github/workflows/ci.yml` (lint, typecheck, test, build).
-2. `GET /healthz` returning `{status, version}`; structured JSON logging with request
-   IDs (`app/core/logging.py`) — verify no message-content fields exist in the log model.
-3. `GET /api/v1/dev/stream-test`: SSE endpoint emitting 10 timed `response.delta`
-   events then `response.completed`.
-4. Frontend shell: a page that opens an EventSource against the stream test and renders
-   deltas progressively.
-5. Dockerfile for the backend; compose runs api + mongo together.
+| Decision | Blocks | Owner |
+|---|---|---|
+| Strategy-call destination (CRM/scheduler) | Phase V4 | Sales |
+| Support destination + routing | Phase V4 | Client Success |
+| Admin identity provider | Phase V5 | Engineering/IT |
+| Privacy/consent wording; retention periods | Phase V6 | Legal/Privacy |
+| Approved security claims; pricing policy; case studies | Phase V2 (content) | Security/Sales/Marketing/Legal |
+| AI Maturity Index details | Phase V2 (content) | Product owner |
+| Official portal URL + reset instructions | Phase V2/V7 | Client Success |
+| Public citation behavior (display on/off) | Phase V7 | Product/Marketing |
+| MongoDB Atlas vs self-hosted | Phase V8 | Engineering |
+| Initial model + fallback | Phase V1 | Engineering |
 
-✅ CHECKPOINT 0 — `docker compose up` then observe deltas rendering one-by-one in the
-browser (not buffered into one paint); `uv run pytest` and CI green.
-Commit: `chore: walking skeleton with verified SSE`
-> Deploy note (human task): push this skeleton to DigitalOcean and re-verify SSE through
-> the real routing path before Phase 5. If deltas arrive buffered, fix proxy config now.
-
----
-
-## Phase 1 — Core + conversation document model
-
-Goal: the atomic turn primitive everything else sits on.
-
-1. `app/core/`: `config.py` (pydantic-settings: MONGO_URI, OPENAI_API_KEY,
-   SESSION_SECRET(S), MESSAGE_CAP=40, MESSAGE_MAX_CHARS=2000, IP_CREATE_CAP),
-   `ids.py` (ULID with prefixes), `security.py` (HMAC token mint/verify with key IDs),
-   `errors.py` (error enum + exception → error-contract handler).
-2. Pydantic models for the `conversations` document exactly per contracts §7
-   (embedded messages, `active_run`, `message_count`, `unsupported_questions`).
-3. `ConversationRepository`:
-   - `create()`,
-   - `begin_turn(cid, user_msg, cmid)` → the single `findOneAndUpdate` implementing
-     lock + append + dedupe + cap (ADR §3.1); returns one of
-     `STARTED | DUPLICATE(existing) | BUSY | CAP_REACHED`,
-   - `complete_turn(cid, assistant_msg)` (push + clear lock + touch activity),
-   - `fail_turn(...)`, `clear_stale_locks(older_than)`,
-   - `get_transcript(cid)`.
-4. Indexes from contracts §8 created on startup (idempotent).
-5. Tests against real Mongo (compose service): concurrency test — two simultaneous
-   `begin_turn` calls, exactly one STARTED; duplicate cmid returns DUPLICATE; cap test;
-   stale-lock recovery test.
-
-✅ CHECKPOINT 1 — `uv run pytest tests/domain/ -x` green including the concurrency test;
-mypy clean. Commit: `feat: conversation document model with atomic turn operations`
+**Parallel track from day 0:** content owners run approval cycles (security claims, pricing
+wording, AI Maturity details, portal URL, case studies, privacy wording). Longer lead time
+than the engineering — do not let it become the critical path.
 
 ---
 
-## Phase 2 — Adapter, orchestrator, chat endpoints
+## Phase V0 — V1 foundation and staging environment
 
-Goal: streamed multi-turn chat with a mockable model boundary.
+Goal: split configuration into environments and stand up a real **staging** deploy, so every
+later phase is demonstrable on deployed infra (not just localhost).
 
-1. `app/agent/adapter.py`: `send(messages, tools) -> AsyncIterator[StreamEvent]` over
-   the OpenAI Responses API; normalize deltas, tool calls, usage, errors
-   (`MODEL_UNAVAILABLE` mapping). Nothing OpenAI-typed escapes this file.
-2. `tests/fakes.py`: `FakeAdapter` (scripted deltas/tool-calls/errors) — used by every
-   test above this layer.
-3. `app/agent/prompts/sys-v1.md`: versioned system prompt implementing identity, tone,
-   answer pattern, prohibited claims, and escalation rules from docs 05 §1/§7.
-4. `orchestrator.py` turn loop: begin_turn → build window (system + all messages;
-   cap guarantees fit) → adapter.send with tool loop → SSE relay → complete/fail_turn,
-   storing usage/latency/sources/error_code on the assistant message.
-5. Public endpoints: `POST /api/v1/conversations` (welcome + suggested actions +
-   token; per-IP cap), `POST /api/v1/conversations/{id}/messages` (SSE, full event
-   sequence per contracts §3.2, BUSY/CAP/length handling), `GET .../messages`.
-6. Integration tests with FakeAdapter: happy stream, duplicate replay, busy 409,
-   cap → `limit.reached`, adapter failure → `response.failed` + failed message stored.
+1. `app/core/config.py`: per-environment settings (staging/production) for `MONGO_URI`,
+   OpenAI project key, and Vector Store IDs; production config validation (extend the
+   fail-closed secret guard to require all prod inputs); `app_version`/build metadata on
+   `/healthz`; feature flags for V1-in-progress surfaces.
+2. Secrets management approach documented (no secrets in repo/logs; injected per env).
+3. Deploy the current app to **staging** on the target host; re-verify SSE renders
+   progressively through the load-balancer path (the E00 skeleton test, now on staging).
+4. CI: build/test/lint/typecheck on every push; deploy to staging on main.
 
-✅ CHECKPOINT 2 — full test suite green; manual smoke: `scripts/chat_repl.py` holds a
-3-turn conversation against the dev server with the real API key.
-Commit: `feat: streaming chat with stateless model calls`
+✅ CHECKPOINT V0 — staging URL serves the widget with streaming verified through the LB;
+`pytest`/`mypy`/`ruff` green; prod-config validation test asserts a missing prod secret
+fails startup. Commit: `chore: V1 foundation and staging environment`
+> Blocked-on: none (uses placeholders for prod-only inputs).
 
 ---
 
-## Phase 3 — Knowledge, canonical answers, tools ⚡
+## Phase V1 — Agent controls and retrieval hardening ⚡
 
-Goal: grounded answers with canonical precedence. Contracts are frozen, so run 3A/3B/3C
-as parallel subagents, then integrate.
+Goal: versioned prompts/model with fallback, tracing, and retrieval quality controls; the
+golden gate wired into deployment.
 
-- **3A (subagent):** `knowledge/` — `scripts/upload_knowledge.py` (create Vector Store,
-  upload `docs/knowledge/*.md`, record metadata in `knowledge_sources`), search adapter
-  calling Vector Store search with `audience=public` forced app-side, result
-  normalization, `RETRIEVAL_UNAVAILABLE` fallback. Unit tests with mocked provider.
-- **3B (subagent):** `canonical/` — repository, `scripts/seed_canonical.py` seeding all
-  records from docs 05 §3 (pricing, security, AI Maturity, portal, company, services,
-  industries, partners, case-study policy, unsupported), `get_canonical_answer` matching
-  by intent with `mandatory_escalation` honored. Tests.
-- **3C (subagent):** `docs/knowledge/` corpus — author 10–15 markdown source files from
-  docs 05 content (company, each service, industries, LLM selection/partners, security,
-  engagement approach, maturity index). Content only; no code.
-- **Integrate (main session):** register the three read-only tools with the
-  orchestrator's tool loop; store `canonical_answer_id`/`sources` on messages; wire
-  suggested-action IDs from canonical `allowed_action_ids`.
+1. Versioned prompt registry (already `prompts/sys-vN.md`) + versioned model configuration
+   (approved model + **approved fallback**); the assistant message already records the
+   prompt/model version — surface both in admin.
+2. `app/agent/adapter.py`: on `MODEL_UNAVAILABLE`, retry once on the fallback model; add
+   tracing hooks (per-turn trace id, latency, token usage — **no PII, no content**).
+3. Retrieval: metadata filters (audience stays forced `public`; add category filters) and a
+   **relevance threshold** that drops low-score hits before grounding; keep the
+   `RETRIEVAL_UNAVAILABLE` fallback.
+4. Staging + production Vector Stores; `upload_knowledge.py` targets an env; document the
+   staging → production **promotion** step (never edit prod content directly).
+5. CI: `python -m eval.run` runs against the **staging config** as a deployment gate.
 
-✅ CHECKPOINT 3 — tests green; REPL smoke: "what do you charge?" uses the pricing
-canonical and offers strategy_call; "do you work with construction?" answers from
-retrieval with stored sources; nonsense question triggers the unsupported pattern.
-Commit: `feat: retrieval and canonical answers with read-only tools`
+✅ CHECKPOINT V1 — golden set green on staging config; a test forces `MODEL_UNAVAILABLE` and
+asserts the fallback path; a low-relevance hit is filtered out of grounding.
+Commit: `feat: versioned agent config, model fallback, and retrieval controls`
+> Blocked-on: initial model + fallback (Engineering).
 
 ---
 
-## Phase 4 — Golden evaluation harness
+## Phase V2 — Content approval lifecycle and mid-conversation booking ⚡
 
-Goal: the regression gate, before the UI exists.
+Goal: approved-content lifecycle, plus fix the top POC gap — the booking form must surface
+mid-conversation, not only from the welcome chip.
 
-1. `eval/run.py`: loads `eval/golden_set.yaml`, drives the orchestrator (real adapter by
-   default, `--fake` for CI plumbing tests), evaluates assertions
-   (`must_use_canonical`, `must_not_contain`, `must_offer_action`, `must_escalate`,
-   `must_not_confirm_client`, `must_not_break_character`), prints a per-case report,
-   exits non-zero on failure.
-2. Author the initial 30+ cases per docs 05 §8: six scenarios, pricing/cert/client/SLA
-   probes, escalation triggers, unsupported, multi-turn discovery, injection probes
-   (user-text and a poisoned test knowledge doc), credential refusal, AI disclosure.
-3. CI job (manual-trigger + on changes to `prompts/`, canonical seeds, or `eval/`).
+1. Canonical approval lifecycle — **most of this already ships** (verify before building):
+   `canonical_answers` already has `status` (`draft`|`approved`, default draft),
+   `owner`/`effective_date`/`review_date`, the `intent_status` index, and
+   `get_canonical_answer` already serves **only `approved`** (contracts §5/§8). The real V1
+   gap is small: let `seed_canonical.py`/import write `draft` (today it stamps `approved`),
+   and add the admin **approve** action (built in Phase V5) that flips draft → approved.
+2. **Booking action fix (top V1 item, DECISIONS_LOG):** add a canonical answer for the
+   booking/scheduling intent whose `allowed_action_ids` includes `strategy_call`; add that
+   intent to the `get_canonical_answer` tool + system-prompt enum and route
+   "book / connect / schedule a call" phrasings to it, so the reply always carries the
+   `strategy_call` chip → the widget opens the form. No new tool (keeps invariant 2).
+3. Ensure `knowledge_sources` carries review metadata (owner, review-by); the scheduled
+   knowledge-review reminder **job** that reads it is built in Phase V3.
+4. Golden set: add a mid-conversation booking case (`must_offer_action: strategy_call`) and a
+   draft-not-served case.
 
-✅ CHECKPOINT 4 — `uv run python -m eval.run` green; deliberately break the prompt
-(remove the pricing rule), confirm the gate fails, restore.
-Commit: `feat: golden evaluation set and runner`
-
----
-
-## Phase 5 — Chat widget UI ⚡
-
-Goal: the iframe widget. Backend contracts frozen since Phase 2, so UI subtasks
-parallelize; also parallel-safe with Phase 6 backend work.
-
-- **5A (subagent):** widget shell — iframe app + host loader script with origin-checked
-  postMessage (open/close/resize), launcher, header ("Cadre AI Assistant · AI"), privacy
-  disclosure, welcome + suggested prompt chips, mobile layout.
-- **5B (subagent):** conversation view — composer (client_message_id generation, length
-  limit, disabled-while-busy), streaming renderer, suggested-action buttons, feedback
-  control, error/partial/cap states with exact copy from docs 05 §6.
-- **5C (subagent):** form panels — strategy-call, portal-support, escalation forms with
-  client-side drafts, validation, review + consent + confirm step, success/failure/
-  duplicate states. (Submits against the Phase 6 endpoint; stub the client until then.)
-- Integrate; component tests (Vitest + Testing Library) for streaming render, busy
-  lockout, and form review flow.
-
-✅ CHECKPOINT 5 — `pnpm test` green; manual: full conversation with streaming, an action
-chip opening a form, error state on server kill.
-Commit: `feat: iframe chat widget`
+✅ CHECKPOINT V2 — golden green incl. the booking case; a `draft` canonical answer is NOT
+served; asking to "book a call" three turns in surfaces the form. Run `eval.run` (content
+change). Commit: `feat: content approval lifecycle and mid-conversation booking action`
+> Blocked-on: final approved wording (parallel content track) — engineer against seeded drafts.
 
 ---
 
-## Phase 6 — Requests endpoint
+## Phase V3 — Background worker and job infrastructure
 
-Goal: the one write path.
+Goal: the dedicated worker process and durable job model everything async sits on. Build this
+BEFORE delivery/retention — they are job types on top of it.
 
-1. `POST /api/v1/requests`: per-type Pydantic schemas (contracts §3.4), email
-   validation, `confirmed` + `consent_version` required, unique idempotency key →
-   replay with `DUPLICATE_ACTION` detail, reference generation (`REQ-XXXX`),
-   escalation type stores verbatim question + safe summary; escalation contact optional.
-2. `POST /api/v1/messages/{id}/feedback` with ownership check.
-3. Record `outcome` on the conversation when a request is created.
-4. Wire the widget forms to the live endpoint; verify preserved-draft-on-failure.
-5. Tests: each type, validation failures, idempotent replay, feedback ownership.
+1. `jobs` collection + Pydantic job model **exactly per contracts §7** (`type`, `resource_id`,
+   `status: pending|running|done|failed|dead_letter`, `attempts`, `max_attempts`,
+   `available_at`, `lock_owner`, `lock_expires_at`, `last_error`); **atomic claim** via the §7
+   `findOneAndUpdate({status:"pending", available_at:{$lte:now}}, …)`; indexes
+   `{status:1, available_at:1}` + `{lock_expires_at:1}` (§8). Mirrors the turn-lock discipline.
+2. `app/worker.py`: a claim-and-run loop with graceful shutdown; per-job-type retry limits,
+   exponential backoff, `lock_expires_at` lease expiry, and dead-letter transition.
+3. Move the stale-lock sweep into a scheduled worker job (still available as the CLI script).
+4. Scheduled jobs: **daily aggregates** (conversation/request/feedback counts for the admin
+   overview); **knowledge-review reminders** (surface `knowledge_sources` past `review_date`);
+   **abandonment/expiration sweep** (mark inactive conversations abandoned — configurable;
+   distinct from the retention *deletion* in V6).
+5. Monitoring hooks: health, queue depth, dead-letter count (metrics only — no PII).
+6. Tests: two workers claim the same job → exactly one runs; retry→backoff→dead-letter;
+   crash mid-job → `lock_expires_at` passes → reclaimed.
 
-✅ CHECKPOINT 6 — suite green; manual: submit each request type end-to-end from the
-widget, see the reference, resubmit and get the duplicate message.
-Commit: `feat: unified requests with idempotent submission`
-
----
-
-## Phase 7 — Read-only admin ⚡
-
-Goal: operational visibility. 7A/7B parallelize (API vs UI once API schemas are written first).
-
-- **7A:** admin router behind basic auth (config credentials, HTTPS assumption
-  documented): dashboard metrics, conversation list + detail (masked email everywhere:
-  `a***@acme.com`), requests list with type/status filters, unresolved-questions list
-  (from `unsupported_questions`).
-- **7B (subagent):** minimal admin UI (separate route/app, desktop-first) rendering the
-  five views. Plain tables; no design system needed.
-- Tests: masking helper (property-style over odd emails), auth required on every admin
-  route, unresolved list populates after an unsupported question.
-
-✅ CHECKPOINT 7 — suite green; manual: hold a chat with one unsupported question and one
-strategy-call request, confirm all of it is visible (masked) in admin.
-Commit: `feat: read-only admin dashboard`
+✅ CHECKPOINT V3 — worker runs against staging; concurrency-claim test green; a failing job
+dead-letters after its retry limit; daily aggregates written; a source past its `review_date`
+is flagged. Commit: `feat: background worker and durable job model`
+> Blocked-on: none.
 
 ---
 
-## Phase 8 — Hardening and POC exit
+## Phase V4 — Business delivery integrations
 
-1. Abuse caps verified end-to-end: message length, per-conversation cap UX, per-IP
-   creation cap (TTL counter collection).
-2. Log-hygiene audit: grep-based test asserting no `content`, `email`, `body` fields in
-   any log call; exception paths sanitized.
-3. Stale-lock sweep wired (opportunistic on request + `scripts/sweep_locks.py`).
-4. `docs/RUNBOOK_POC.md`: env vars, seed/upload scripts, manual deletion procedure
-   (single collection), deploy steps.
-5. Full pass: `pytest`, `mypy`, `ruff`, `pnpm test`, `python -m eval.run`, and the six
-   scenario walkthroughs from `docs/01_Product_Requirements_Document.md` §6.
+Goal: deliver each request to its external destination via idempotent async jobs on the V3 worker.
 
-✅ CHECKPOINT 8 (POC exit) — everything above green; write `docs/POC_EXIT_REPORT.md`
-mapping each PRD scenario to how it was verified.
-Commit: `chore: POC hardening and exit checklist`
+1. `app/domain/delivery/`: destination adapters — strategy-call → CRM/scheduler;
+   portal-support + escalation → ticketing. **Provider-isolated** (invariant 4); IDs/errors
+   normalized; `FakeDeliveryClient` for tests.
+2. Creating a request enqueues a delivery job **idempotently by `request_id`** (an external
+   system is called at most once; retries replay).
+3. Bounded retries with backoff → **dead-letter**; store the returned **external reference**
+   on the request (`{external_reference:1}` sparse index, contracts §8). Per contracts §7,
+   **before a retry query the destination for the request reference** — ambiguous outcomes
+   park as `delivery_failed` for admin action, never a blind retry and **never a re-prompt**
+   (invariant 11). **Category routing** where required.
+4. Request status reflects delivery (`received` → `delivering` → `delivered` / `delivery_failed`).
+5. Failure-path tests (a V1 gate requirement): transient error → retry → success; permanent
+   → dead-letter; duplicate enqueue → single external call; external ref persisted.
+
+✅ CHECKPOINT V4 — each request type delivers to its faked destination; retry, dead-letter,
+and idempotent replay all tested; external reference stored and shown only in admin.
+Commit: `feat: asynchronous request delivery with retries and dead-letter`
+> Blocked-on: destinations selected (Sales, Client Success) — ship against `FakeDeliveryClient` + a config-selected adapter until then.
 
 ---
 
-## Backlog (do NOT build during POC phases)
+## Phase V5 — Admin V1: roles, audit, knowledge UI, delivery ops ⚡
 
-CRM/ticket delivery jobs, dedicated worker, admin roles/identity provider, knowledge
-management UI, retention jobs, reconnect UX, citations UI, intent/topic labeling,
-conversation summaries. See `docs/02_Release_Capability_Plan.md` for V1.
+Goal: production identity, two roles, audit, and the operational admin surfaces.
+
+1. Production identity provider; roles **`admin` and `viewer`** enforced per route; masking
+   stays the default.
+2. `app/domain/audit/`: **PII reveal/export requires a reason and writes an append-only audit
+   record**; content-approval and deletion actions are audited too. A `viewer` cannot reveal.
+3. Lists gain filters + **cursor pagination**.
+4. **Delivery-failure dashboard**: dead-letter view + a `redeliver` action (an admin write
+   that re-enqueues a job — audited).
+5. **Knowledge management UI**: upload / replace / remove / **approve** (drives the Phase V2
+   lifecycle); indexing-status polling.
+6. Privacy-request management view (feeds Phase V6).
+
+✅ CHECKPOINT V5 — a `viewer` is denied reveal (403) and the attempt/authorized-reveal are
+audited; `redeliver` re-enqueues a dead-lettered job; approving a draft publishes it.
+Commit: `feat: role-controlled admin with audit, knowledge UI, and delivery ops`
+> Blocked-on: admin identity provider (Engineering/IT) — build against an IdP interface + a dev stub.
+
+---
+
+## Phase V6 — Privacy operations: retention, verified deletion, audit
+
+Goal: legal-grade privacy operations on the V3 worker.
+
+1. Legal-reviewed chat disclosure + contact-submission consent, with **recorded versions**.
+2. **Retention classes/periods** enforced by a scheduled worker sweep + TTL on abandoned
+   anonymous conversations (contracts §8), per approved periods.
+3. **Verified deletion requests** recorded in a `privacy_requests` collection (contracts §7):
+   verify the request, then execute single-store deletion across
+   `conversations`/`requests`/`feedback` (+ documented provider-retention terms); the whole
+   action is audited. No ad-hoc deletes on the request path (invariant 13).
+4. Reveal/export audit surfaced in admin; export controls.
+
+✅ CHECKPOINT V6 — the retention sweep removes data past its class period; a verified deletion
+request purges a subject across all collections and writes an audit record; the privacy notice
+matches actual handling. Commit: `feat: retention, verified deletion, and privacy operations`
+> Blocked-on: retention periods + privacy/consent wording (Legal/Privacy).
+
+---
+
+## Phase V7 — Experience and accessibility ⚡
+
+Goal: production-grade widget UX.
+
+1. **Reconnect + transcript recovery**: on reload/stream drop, resume the conversation from
+   the transcript endpoint (session token in memory; re-create only on true expiry).
+2. Refined degraded states: expired-session recovery, cap UX, retrieval-degraded copy — exact
+   wording from docs 05 §6.
+3. **Accessibility pass**: keyboard navigation, focus management, screen-reader **status for
+   streaming** (`aria-live`), contrast, reduced-motion; automated axe check + manual audit.
+4. Production website integration; production portal + privacy links.
+5. **Citation display (flag-gated):** if public citation behavior is approved, render approved
+   sources on grounded answers (the assistant message already stores `sources`); otherwise ship
+   with the flag off. Decision: "Public citation behavior" (Product/Marketing).
+
+✅ CHECKPOINT V7 — a mid-conversation reload restores the transcript and resumes; axe +
+keyboard audit clean; a screen reader announces streaming progress and completion.
+Commit: `feat: reconnect, degraded states, and accessibility pass`
+> Blocked-on: production portal + privacy URLs (Client Success / Legal); public citation
+> behavior (Product/Marketing) — ship the citation flag off until decided.
+
+---
+
+## Phase V8 — Production deployment and V1 public gate
+
+Goal: production infrastructure and the **V1 public gate** (doc 02 §8).
+
+1. Separate **staging and production**; load balancer with SSE re-verified; multiple stateless
+   FastAPI instances as needed; the worker deployed and supervised.
+2. **Production MongoDB** (Atlas vs self-hosted — decision) with backups + a **tested
+   restore**; production indexes + connection limits.
+3. **Edge rate limiting + WAF**; secrets management; separate staging/production OpenAI
+   resources and Vector Stores.
+4. Monitoring + alerts live (error rate, dead-letter, latency, queue depth).
+5. Golden set green on the **production configuration**; published approved content.
+
+✅ CHECKPOINT V8 (V1 public gate — doc 02 §8) — approved content published; integrations
+verified with failure-path tests; role-controlled admin; retention + deletion operational;
+production MongoDB with tested restore; staging/production separated; edge controls on;
+monitoring live; privacy notice matches handling; golden set green on prod config. Write
+`docs/V1_EXIT_REPORT.md` mapping each gate item to its evidence.
+Commit: `chore: V1 production deployment and public gate`
+> Blocked-on: MongoDB Atlas vs self-hosted (Engineering).
+
+---
+
+## Backlog (V1.5 / V2+ — do NOT build during V1)
+
+V1.5: semantic topic clustering, async intent/topic labeling, conversation summaries,
+knowledge-gap ranking, evaluation console + **golden-run result history** + dataset curation
+(with PII redaction) — contracts §7 places eval result history at V1.5, resolving the doc 06
+E05 wording; AI Maturity mini-assessment, funnel analytics. V2+: authenticated clients, tenancy/roles, tenant-scoped
+retention, private Vector Stores, client tools with per-call authz, human takeover
+(WebSockets), regional controls. See `docs/02_Release_Capability_Plan.md` §5–6.
