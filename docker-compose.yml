@@ -1,0 +1,23 @@
+# Local infrastructure for the walking skeleton: the API container talks to a
+# Mongo 7 container over the compose network. The frontend runs separately via
+# `pnpm dev` (port 5173) and hits the API directly (CORS-allowed).
+services:
+  mongo:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+
+  api:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      MONGO_URI: mongodb://mongo:27017/cadre_chatbot
+      CORS_ORIGINS: http://localhost:5173
+    depends_on:
+      - mongo
+
+volumes:
+  mongo-data:
