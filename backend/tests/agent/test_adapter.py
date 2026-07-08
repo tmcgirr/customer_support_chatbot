@@ -1,0 +1,164 @@
+"""Adapter-level tests: synthetic OpenAI events -> normalized StreamEvents.
+
+This is the riskiest, most provider-coupled code; the real SDK is never called.
+A fake AsyncOpenAI client feeds hand-built event objects through `send`.
+"""
+
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+from openai import OpenAIError
+
+from app.agent.adapter import (
+    AdapterError,
+    Completed,
+    ModelMessage,
+    OpenAIResponsesAdapter,
+    StreamEvent,
+    TextDelta,
+    ToolCall,
+)
+
+
+def ev(**kwargs: Any) -> SimpleNamespace:
+    return SimpleNamespace(**kwargs)
+
+
+class _FakeStream:
+    def __init__(self, events: list[Any], stream_raise: Exception | None) -> None:
+        self._events = events
+        self._raise = stream_raise
+
+    async def __aiter__(self) -> Any:
+        for event in self._events:
+            yield event
+        if self._raise is not None:
+            raise self._raise
+
+
+class _FakeResponses:
+    def __init__(
+        self, events: list[Any], create_raise: Exception | None, stream_raise: Exception | None
+    ) -> None:
+        self._events = events
+        self._create_raise = create_raise
+        self._stream_raise = stream_raise
+        self.last_request: dict[str, Any] | None = None
+
+    async def create(self, **kwargs: Any) -> _FakeStream:
+        self.last_request = kwargs
+        if self._create_raise is not None:
+            raise self._create_raise
+        return _FakeStream(self._events, self._stream_raise)
+
+
+class _FakeClient:
+    def __init__(
+        self,
+        events: list[Any] | None = None,
+        *,
+        create_raise: Exception | None = None,
+        stream_raise: Exception | None = None,
+    ) -> None:
+        self.responses = _FakeResponses(events or [], create_raise, stream_raise)
+
+    async def close(self) -> None:
+        pass
+
+
+def _adapter(client: _FakeClient) -> OpenAIResponsesAdapter:
+    return OpenAIResponsesAdapter(client=client, model="test-model")  # type: ignore[arg-type]
+
+
+async def _collect(adapter: OpenAIResponsesAdapter) -> list[StreamEvent]:
+    return [
+        event
+        async for event in adapter.send(
+            instructions="sys", messages=[ModelMessage(role="user", content="hi")]
+        )
+    ]
+
+
+async def test_streams_text_then_completed_with_usage() -> None:
+    client = _FakeClient(
+        [
+            ev(type="response.output_text.delta", delta="Hello"),
+            ev(type="response.output_text.delta", delta=" world"),
+            ev(type="response.completed", response=ev(usage=ev(input_tokens=5, output_tokens=2))),
+        ]
+    )
+    adapter = _adapter(client)
+    events = await _collect(adapter)
+
+    assert [type(e).__name__ for e in events] == ["TextDelta", "TextDelta", "Completed"]
+    assert isinstance(events[-1], Completed)
+    assert events[-1].usage is not None
+    assert events[-1].usage.input_tokens == 5
+    # Stateless: store must be disabled.
+    assert client.responses.last_request is not None
+    assert client.responses.last_request["store"] is False
+
+
+async def test_refusal_delta_is_surfaced_as_text() -> None:
+    client = _FakeClient(
+        [
+            ev(type="response.refusal.delta", delta="I can't help with that."),
+            ev(type="response.completed", response=ev(usage=None)),
+        ]
+    )
+    events = await _collect(_adapter(client))
+    assert isinstance(events[0], TextDelta)
+    assert events[0].text == "I can't help with that."
+
+
+async def test_tool_call_accumulates_name_and_arguments() -> None:
+    client = _FakeClient(
+        [
+            ev(
+                type="response.output_item.added",
+                item=ev(type="function_call", id="fc_1", call_id="call_1", name="search_knowledge"),
+            ),
+            ev(
+                type="response.function_call_arguments.done",
+                item_id="fc_1",
+                arguments='{"query": "construction"}',
+            ),
+            ev(type="response.completed", response=ev(usage=None)),
+        ]
+    )
+    events = await _collect(_adapter(client))
+    tool_calls = [e for e in events if isinstance(e, ToolCall)]
+    assert len(tool_calls) == 1
+    assert tool_calls[0].call_id == "call_1"
+    assert tool_calls[0].name == "search_knowledge"
+    assert tool_calls[0].arguments == {"query": "construction"}
+
+
+async def test_response_failed_event_raises_adapter_error() -> None:
+    client = _FakeClient(
+        [ev(type="response.output_text.delta", delta="partial"), ev(type="response.failed")]
+    )
+    with pytest.raises(AdapterError):
+        await _collect(_adapter(client))
+
+
+async def test_stream_without_completed_raises_adapter_error() -> None:
+    # Clean mid-stream EOF: deltas but no terminal event -> failure, not success.
+    client = _FakeClient([ev(type="response.output_text.delta", delta="truncated")])
+    with pytest.raises(AdapterError):
+        await _collect(_adapter(client))
+
+
+async def test_openai_error_on_create_maps_to_adapter_error() -> None:
+    client = _FakeClient(create_raise=OpenAIError("boom"))
+    with pytest.raises(AdapterError):
+        await _collect(_adapter(client))
+
+
+async def test_openai_error_mid_stream_maps_to_adapter_error() -> None:
+    client = _FakeClient(
+        [ev(type="response.output_text.delta", delta="x")], stream_raise=OpenAIError("dropped")
+    )
+    with pytest.raises(AdapterError):
+        await _collect(_adapter(client))

@@ -26,8 +26,9 @@ class Settings(BaseSettings):
     # --- Persistence (URI may embed credentials; keep it a secret) ---
     mongo_uri: SecretStr = SecretStr("mongodb://localhost:27017/cadre_chatbot")
 
-    # --- Model provider (used from Phase 2) ---
+    # --- Model provider ---
     openai_api_key: SecretStr = SecretStr("")
+    openai_model: str = "gpt-5.4-mini"
 
     # --- Session tokens (HMAC, versioned by key id; contracts §2) ---
     session_key_id: str = "k1"

@@ -66,6 +66,21 @@ async def test_duplicate_client_message_id_replays(repo: ConversationRepository)
     assert sum(1 for m in replay.conversation.messages if m.role == "user") == 1
 
 
+async def test_duplicate_while_in_flight_returns_busy(repo: ConversationRepository) -> None:
+    convo = await repo.create()
+    started = await repo.begin_turn(convo.id, "q1", "cmid_1")
+    assert started.outcome == "STARTED"
+
+    # Same cmid while the run is still active and no reply exists yet -> wait, not replay.
+    again = await repo.begin_turn(convo.id, "q1 retry", "cmid_1")
+    assert again.outcome == "BUSY"
+
+    # Once the turn produces a reply, the same cmid replays as DUPLICATE.
+    await repo.complete_turn(convo.id, started.run_id or "", _assistant())
+    replay = await repo.begin_turn(convo.id, "q1 retry", "cmid_1")
+    assert replay.outcome == "DUPLICATE"
+
+
 async def test_concurrent_begin_turn_exactly_one_started(repo: ConversationRepository) -> None:
     """The Checkpoint 1 gate: N simultaneous turns, exactly one STARTED."""
     convo = await repo.create()

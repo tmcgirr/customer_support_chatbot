@@ -8,7 +8,10 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
+from app.agent.adapter import OpenAIResponsesAdapter
 from app.api import dev, health
+from app.api.public import conversations as public_conversations
+from app.api.public import messages as public_messages
 from app.core.config import get_settings
 from app.core.db import create_mongo_client, get_database
 from app.core.errors import register_exception_handlers
@@ -25,10 +28,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await ensure_indexes(database["conversations"])
     app.state.mongo_client = client
     app.state.db = database
+    app.state.adapter = OpenAIResponsesAdapter()
     logger.info("app.startup", extra={"context": {"db": database.name}})
     try:
         yield
     finally:
+        await app.state.adapter.aclose()
         client.close()
         logger.info("app.shutdown")
 
@@ -78,6 +83,8 @@ def create_app() -> FastAPI:
     register_exception_handlers(app)
     app.include_router(health.router)
     app.include_router(dev.router)
+    app.include_router(public_conversations.router)
+    app.include_router(public_messages.router)
     return app
 
 

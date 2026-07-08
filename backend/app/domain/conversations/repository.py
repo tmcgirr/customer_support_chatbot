@@ -34,6 +34,15 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def _has_assistant_reply(conversation: Conversation, cmid: str) -> bool:
+    index = next(
+        (i for i, m in enumerate(conversation.messages) if m.client_message_id == cmid), None
+    )
+    if index is None:
+        return False
+    return any(m.role == "assistant" for m in conversation.messages[index + 1 :])
+
+
 async def ensure_indexes(collection: Collection) -> None:
     """Idempotently create the conversation indexes (contracts §8)."""
     await collection.create_index(
@@ -58,6 +67,8 @@ class ConversationRepository:
         locale: str | None = None,
         consent_version: str | None = None,
         message_cap: int | None = None,
+        prompt_version: str | None = None,
+        model: str | None = None,
     ) -> Conversation:
         now = _now()
         conversation = Conversation(
@@ -67,6 +78,8 @@ class ConversationRepository:
             locale=locale,
             consent_version=consent_version,
             message_cap=message_cap if message_cap is not None else get_settings().message_cap,
+            prompt_version=prompt_version,
+            model=model,
             started_at=now,
             last_activity_at=now,
         )
@@ -124,14 +137,21 @@ class ConversationRepository:
         if existing is None:
             return BeginTurnResult("NOT_FOUND")
         conversation = Conversation.model_validate(existing)
-        if any(m.client_message_id == client_message_id for m in conversation.messages):
+        is_duplicate = any(m.client_message_id == client_message_id for m in conversation.messages)
+        if is_duplicate:
+            # Replay only if the original produced a reply. If it is still in
+            # flight (lock held, no assistant yet), the caller must wait rather
+            # than receive a bogus "completed with no answer" replay.
+            in_flight = conversation.active_run is not None and not _has_assistant_reply(
+                conversation, client_message_id
+            )
+            if in_flight:
+                return BeginTurnResult("BUSY", conversation=conversation)
             return BeginTurnResult("DUPLICATE", conversation=conversation)
         # Cap is terminal, so it takes precedence over the transient busy state.
         if conversation.message_count >= conversation.message_cap:
             return BeginTurnResult("CAP_REACHED", conversation=conversation)
-        if conversation.active_run is not None:
-            return BeginTurnResult("BUSY", conversation=conversation)
-        # Lost a race between the failed update and this read: treat as busy.
+        # active_run set, or a lost race between the failed update and this read.
         return BeginTurnResult("BUSY", conversation=conversation)
 
     async def complete_turn(

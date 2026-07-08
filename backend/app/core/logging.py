@@ -91,6 +91,9 @@ def configure_logging(level: int = logging.INFO) -> None:
 
     # uvicorn's access log echoes query strings/paths that can carry PII; silence it.
     logging.getLogger("uvicorn.access").disabled = True
+    # Keep third-party SDK loggers from emitting request URLs/bodies at INFO/DEBUG.
+    for noisy in ("httpx", "httpcore", "openai"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
 def get_logger(name: str) -> logging.Logger:
