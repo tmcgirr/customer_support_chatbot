@@ -193,3 +193,10 @@ class ConversationRepository:
     async def get_transcript(self, conversation_id: str) -> Conversation | None:
         doc = await self._collection.find_one({"_id": conversation_id})
         return Conversation.model_validate(doc) if doc is not None else None
+
+    async def set_outcome(self, conversation_id: str, outcome: str) -> None:
+        """Record the conversation outcome when a request is created (contracts §7)."""
+        await self._collection.update_one(
+            {"_id": conversation_id},
+            {"$set": {"outcome": outcome, "last_activity_at": _now()}},
+        )

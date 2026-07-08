@@ -114,3 +114,24 @@ Choices made during implementation that the planning docs did not fully specify
 - **Deferred → V1 polish:** an expired session (`UNAUTHORIZED_SESSION`) maps to the generic
   failure copy without re-creating the conversation; `limit.reached` leaves the composer
   enabled (user can re-hit the cap). Both noted by the Phase 5 review.
+
+## Phase 6 — unified requests + feedback (the write path)
+
+- **2026-07-07 · Idempotency is scoped per (conversation_id, Idempotency-Key)**, not global —
+  the same key in two conversations never collides (unique compound index). A duplicate key
+  **replays the original result BEFORE re-validating** the payload (contracts §9), returning
+  HTTP 200 with `duplicate: true`; the frontend branches on that flag (duplicate step vs
+  success). Note: a schema-changed collection needs its old index dropped (a migration; the
+  dev `requests`/`feedback` collections were dropped so the new compound index rebuilds).
+- **2026-07-07 · `set_outcome` is an idempotent `$set` run on fresh AND replay**, so a request
+  whose outcome write failed on the first attempt is reconciled when the client retries.
+- **2026-07-07 · Feedback is one rating per message** (unique `(conversation_id, message_id)`
+  index + upsert, last-write-wins) — a double-click/retry updates in place instead of
+  spamming rows.
+- **2026-07-07 · Input hardening:** `fields` are whitelisted per type (unknown keys dropped)
+  and each value length-capped (4000); feedback `comment` capped (2000); Idempotency-Key
+  length-capped — bounds storage/DoS and drops junk keys before persistence.
+- **Deferred → V1:** Stripe-style key↔payload fingerprint binding (POC mints a fresh key per
+  submission, so a reused key means the same request); checking the conversation exists / is
+  active before filing a request (a stale token can currently file against a deleted
+  conversation; `set_outcome` no-ops there).

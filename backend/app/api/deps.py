@@ -12,7 +12,10 @@ from app.core.errors import AppError, ErrorCode
 from app.core.security import SessionClaims, verify_session_token
 from app.domain.canonical.repository import CanonicalAnswerRepository
 from app.domain.conversations.repository import ConversationRepository
+from app.domain.feedback.repository import FeedbackRepository
 from app.domain.knowledge.search import KnowledgeSearch
+from app.domain.requests.repository import RequestRepository
+from app.domain.requests.service import RequestService
 
 
 def get_conversation_repository(request: Request) -> ConversationRepository:
@@ -21,6 +24,14 @@ def get_conversation_repository(request: Request) -> ConversationRepository:
 
 def get_canonical_repository(request: Request) -> CanonicalAnswerRepository:
     return CanonicalAnswerRepository(request.app.state.db["canonical_answers"])
+
+
+def get_request_repository(request: Request) -> RequestRepository:
+    return RequestRepository(request.app.state.db["requests"])
+
+
+def get_feedback_repository(request: Request) -> FeedbackRepository:
+    return FeedbackRepository(request.app.state.db["feedback"])
 
 
 def get_adapter(request: Request) -> ModelAdapter:
@@ -33,6 +44,8 @@ def get_knowledge_search(request: Request) -> KnowledgeSearch:
 
 RepoDep = Annotated[ConversationRepository, Depends(get_conversation_repository)]
 CanonicalRepoDep = Annotated[CanonicalAnswerRepository, Depends(get_canonical_repository)]
+RequestRepoDep = Annotated[RequestRepository, Depends(get_request_repository)]
+FeedbackRepoDep = Annotated[FeedbackRepository, Depends(get_feedback_repository)]
 AdapterDep = Annotated[ModelAdapter, Depends(get_adapter)]
 KnowledgeSearchDep = Annotated[KnowledgeSearch, Depends(get_knowledge_search)]
 
@@ -59,16 +72,34 @@ def get_orchestrator(
 OrchestratorDep = Annotated[ChatOrchestrator, Depends(get_orchestrator)]
 
 
+def get_request_service(request_repo: RequestRepoDep, conversation_repo: RepoDep) -> RequestService:
+    return RequestService(request_repo, conversation_repo)
+
+
+RequestServiceDep = Annotated[RequestService, Depends(get_request_service)]
+
+
+def _bearer_claims(authorization: str | None) -> SessionClaims:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise AppError(ErrorCode.UNAUTHORIZED_SESSION)
+    return verify_session_token(authorization[7:].strip())
+
+
 def require_session(
     conversation_id: str,
     authorization: Annotated[str | None, Header()] = None,
 ) -> SessionClaims:
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise AppError(ErrorCode.UNAUTHORIZED_SESSION)
-    claims = verify_session_token(authorization[7:].strip())
+    """Session bound to a path conversation_id (chat + transcript endpoints)."""
+    claims = _bearer_claims(authorization)
     if claims.cid != conversation_id:
         raise AppError(ErrorCode.UNAUTHORIZED_SESSION)
     return claims
 
 
+def require_token(authorization: Annotated[str | None, Header()] = None) -> SessionClaims:
+    """Valid session token, no path binding (requests + feedback verify the cid inline)."""
+    return _bearer_claims(authorization)
+
+
 SessionDep = Annotated[SessionClaims, Depends(require_session)]
+TokenDep = Annotated[SessionClaims, Depends(require_token)]

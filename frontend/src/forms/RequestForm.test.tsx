@@ -173,4 +173,24 @@ describe("RequestForm failure handling", () => {
     expect(await screen.findByText(/already been submitted/i)).toBeInTheDocument();
     expect(screen.getByText(/REQ-DUP/)).toBeInTheDocument();
   });
+
+  it("shows the duplicate notice on a 200 replay (duplicate: true)", async () => {
+    mockSubmit.mockResolvedValue({
+      request_id: "req_1",
+      status: "received",
+      reference: "REQ-DUP2",
+      duplicate: true,
+    });
+    const { onSubmitted } = renderStrategyForm();
+
+    fillStrategyFields();
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    fireEvent.click(screen.getByLabelText(/i have read and agree/i));
+    fireEvent.click(screen.getByRole("button", { name: /submit request/i }));
+
+    expect(await screen.findByText(/already been submitted/i)).toBeInTheDocument();
+    expect(screen.getByText(/REQ-DUP2/)).toBeInTheDocument();
+    // A replay is not a fresh submission.
+    expect(onSubmitted).not.toHaveBeenCalled();
+  });
 });

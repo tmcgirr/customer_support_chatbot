@@ -11,15 +11,19 @@ from app import __version__
 from app.agent.adapter import OpenAIResponsesAdapter
 from app.api import dev, health
 from app.api.public import conversations as public_conversations
+from app.api.public import feedback as public_feedback
 from app.api.public import messages as public_messages
+from app.api.public import requests as public_requests
 from app.core.config import get_settings
 from app.core.db import create_mongo_client, get_database
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging, get_logger, new_request_id, request_id_var
 from app.domain.canonical.repository import ensure_indexes as ensure_canonical_indexes
 from app.domain.conversations.repository import ensure_indexes as ensure_conversation_indexes
+from app.domain.feedback.repository import ensure_indexes as ensure_feedback_indexes
 from app.domain.knowledge.repository import ensure_indexes as ensure_knowledge_indexes
 from app.domain.knowledge.search import KnowledgeSearch
+from app.domain.requests.repository import ensure_indexes as ensure_request_indexes
 
 logger = get_logger("app.request")
 
@@ -31,6 +35,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await ensure_conversation_indexes(database["conversations"])
     await ensure_knowledge_indexes(database["knowledge_sources"])
     await ensure_canonical_indexes(database["canonical_answers"])
+    await ensure_request_indexes(database["requests"])
+    await ensure_feedback_indexes(database["feedback"])
     app.state.mongo_client = client
     app.state.db = database
     app.state.adapter = OpenAIResponsesAdapter()
@@ -92,6 +98,8 @@ def create_app() -> FastAPI:
     app.include_router(dev.router)
     app.include_router(public_conversations.router)
     app.include_router(public_messages.router)
+    app.include_router(public_requests.router)
+    app.include_router(public_feedback.router)
     return app
 
 

@@ -28,6 +28,15 @@ def request_id() -> str:
     return prefixed_id("req")
 
 
+def request_reference() -> str:
+    """Human-facing reference shown on request confirmations (e.g. REQ-8F3K7Z).
+
+    Uses the random tail of a ULID (uppercase Crockford base32), not the leading
+    timestamp, so references minted in the same millisecond still differ.
+    """
+    return f"REQ-{str(ULID())[-10:]}"
+
+
 def knowledge_source_id() -> str:
     return prefixed_id("kbs")
 

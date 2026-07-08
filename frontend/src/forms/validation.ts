@@ -93,9 +93,9 @@ export function validateDraft(type: RequestType, draft: RequestDraft): FieldErro
     // human_escalation: contact is optional, but if an email is given it must be valid.
     if (req(draft.email) && !isValidEmail(draft.email))
       errors.email = "Please enter a valid email address.";
-    if (!req(draft.category)) errors.category = "Please choose a category.";
+    // Only the question is required (category + summary optional), matching the
+    // backend — someone who just wants a person isn't blocked on filler text.
     if (!req(draft.original_question)) errors.original_question = "Please include your question.";
-    if (!req(draft.context_summary)) errors.context_summary = "Please add a short summary.";
   }
 
   return errors;

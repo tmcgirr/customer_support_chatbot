@@ -108,9 +108,15 @@ export default function RequestForm({
       idempotencyKeyRef.current = idempotencyKey;
       const response = await submitRequest(token, payload, idempotencyKey);
       setReference(response.reference);
-      setStep("success");
-      onSubmitted(response.reference);
+      if (response.duplicate) {
+        // Idempotent replay: the request already existed (contracts §9).
+        setStep("duplicate");
+      } else {
+        setStep("success");
+        onSubmitted(response.reference);
+      }
     } catch (err) {
+      // Defensive fallback: an error-shaped duplicate still shows the duplicate notice.
       if (err instanceof ApiError && (err.code === "DUPLICATE_ACTION" || err.status === 409)) {
         setReference(referenceFromError(err));
         setStep("duplicate");

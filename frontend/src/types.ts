@@ -66,6 +66,8 @@ export interface SubmitRequestResponse {
   request_id: string;
   status: string;
   reference: string;
+  // A duplicate Idempotency-Key replays the original with HTTP 200 (contracts §9).
+  duplicate?: boolean;
 }
 
 export type FeedbackRating = "helpful" | "not_helpful";
