@@ -24,7 +24,8 @@ from app.core.logging import configure_logging, get_logger
 from app.domain.aggregates.repository import AggregatesRepository
 from app.domain.audit.repository import AuditRepository
 from app.domain.conversations.repository import ConversationRepository
-from app.domain.delivery.client import DeliveryClient, SimulatedDeliveryClient
+from app.domain.delivery.adapters import build_delivery_client
+from app.domain.delivery.client import DeliveryClient
 from app.domain.delivery.service import DeliveryService
 from app.domain.feedback.repository import FeedbackRepository
 from app.domain.jobs.models import Job, JobType
@@ -75,10 +76,11 @@ class Worker:
         self._aggregates = AggregatesRepository(db["aggregates"])
         self._privacy = PrivacyRequestRepository(db["privacy_requests"])
         self._audit = AuditRepository(db["audit"])
-        # Default to the simulated client until real CRM/ticketing destinations are
-        # selected (doc 06 §6); swap in a real DeliveryClient here when they are.
+        # Transport is chosen from config (delivery_transport): simulated mock by
+        # default, or a real webhook/email destination when configured. Tests inject a
+        # scriptable fake via delivery_client.
         self._delivery = DeliveryService(
-            self._requests, delivery_client or SimulatedDeliveryClient()
+            self._requests, delivery_client or build_delivery_client(settings)
         )
         self._settings = settings
         self._owner = ids.prefixed_id("wrk")

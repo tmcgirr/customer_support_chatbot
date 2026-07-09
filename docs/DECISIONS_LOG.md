@@ -496,3 +496,28 @@ Choices made during implementation that the planning docs did not fully specify
   3. Point the URI's path at `cadre_chatbot` (DO defaults to `/admin`), keep `authSource=admin`.
   4. nyc1 managed-MongoDB provisioning was pathologically slow (>50 min) on 2026-07-09; nyc3
      provisioned normally. Same-metro, so co-location latency is a non-issue.
+
+## V1.5 — Pluggable request-delivery transports (2026-07-09)
+
+- **Delivery is now transport-pluggable, mock-by-default.** `DELIVERY_TRANSPORT` selects
+  `simulated` (default — a functional MOCK that runs the whole pipeline, needs no creds, and
+  shows in admin as `channel=simulated`), `webhook` (Slack/Teams incoming webhook, Zapier, or a
+  CRM intake — httpx POST), or `email` (SMTP via stdlib smtplib in a worker thread). A neutral
+  `format_request` renders one message all transports share, so the mock preview equals a real
+  send. The worker picks the client via `build_delivery_client(settings)`; switching a real
+  destination on is a config change, never a code change (invariant #4 provider isolation holds —
+  httpx/smtplib types never escape the adapter). Admin surfaces a `delivery_channel` column.
+- **Adversarial-review fixes (2 HIGH, 3 MED, 1 LOW; 0 false positives).**
+  1. (HIGH) A misconfigured real transport used to fall back to the mock and silently drop every
+     lead while admin showed "delivered". Now the fail-closed config guard REJECTS a real
+     transport with missing creds in non-dev (dev keeps the permissive fallback).
+  2. (HIGH) Webhooks/SMTP can't be de-duplicated and `find_by_reference` can't query them, so a
+     retry after a possibly-successful send would double-deliver. Adapters now mark `retryable`
+     ONLY when nothing could have been sent — a pre-send connection failure, or an explicit
+     "not processed" status (HTTP 429/503); every ambiguous post-send outcome is PARKED for admin
+     (invariant #11). The false "receiver dedupes on the idempotency header" docstrings are gone.
+  3. (MED) 429 now retries (was parked). (MED) 3xx is treated as a failure (httpx doesn't follow
+     redirects → nothing delivered). (MED) `httpx.InvalidURL` (not an `HTTPError`) is now caught so
+     no provider type escapes. (LOW) email recipient/sender-refused is permanent, not retried.
+- **Verified:** 278 backend tests (adapter classification per-status/per-exception, factory
+  selection + non-dev fail-closed guard, provider isolation) + admin Channel column.

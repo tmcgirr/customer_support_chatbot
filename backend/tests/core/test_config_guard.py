@@ -73,6 +73,27 @@ def test_prod_accepts_real_viewer_password() -> None:
     assert _build(**{**_PROD, "viewer_password": SecretStr("real-viewer-pw")}).env == "prod"
 
 
+def test_prod_rejects_real_transport_without_config() -> None:
+    # A real delivery transport selected but unconfigured would silently drop leads
+    # via the mock — must fail closed in non-dev.
+    with pytest.raises((ValueError, SettingsError), match="DELIVERY_WEBHOOK_URL"):
+        _build(**{**_PROD, "delivery_transport": "webhook"})
+    with pytest.raises((ValueError, SettingsError), match="DELIVERY_EMAIL"):
+        _build(**{**_PROD, "delivery_transport": "email"})
+
+
+def test_prod_accepts_configured_transport() -> None:
+    s = _build(
+        **{**_PROD, "delivery_transport": "webhook", "delivery_webhook_url": SecretStr("https://h")}
+    )
+    assert s.delivery_transport == "webhook"
+
+
+def test_dev_allows_unconfigured_real_transport() -> None:
+    # dev keeps the permissive fallback (the factory degrades to the simulated mock).
+    assert _build(env="dev", delivery_transport="webhook").delivery_transport == "webhook"
+
+
 def test_staging_is_also_validated() -> None:
     # staging is not dev, so it enforces the same production inputs.
     with pytest.raises((ValueError, SettingsError), match="OPENAI_API_KEY"):

@@ -58,7 +58,7 @@ export default function Requests({
     );
   }
 
-  const colCount = isAdmin ? 11 : 10;
+  const colCount = isAdmin ? 12 : 11;
 
   return (
     <div>
@@ -100,6 +100,7 @@ export default function Requests({
               <th>Contact email</th>
               <th>Company</th>
               <th>Destination</th>
+              <th>Channel</th>
               <th>External ref</th>
               <th>Last delivery error</th>
               <th>Created</th>
@@ -126,6 +127,7 @@ export default function Requests({
                       <td>{unmasked ? unmasked.contact.email : r.contact_email}</td>
                       <td>{unmasked?.contact.company ?? r.contact_company ?? "—"}</td>
                       <td>{r.destination ?? "—"}</td>
+                      <td>{r.delivery_channel ?? "—"}</td>
                       <td>{r.external_reference ?? "—"}</td>
                       <td className="admin-content">{r.last_delivery_error ?? "—"}</td>
                       <td>{r.created_at}</td>

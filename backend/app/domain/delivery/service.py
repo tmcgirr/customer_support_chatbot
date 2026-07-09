@@ -56,7 +56,9 @@ class DeliveryService:
                 logger.warning("delivery.ambiguous", extra={"context": {"request_id": request_id}})
                 return
             if existing is not None:
-                await self._requests.mark_delivered(request_id, existing)
+                await self._requests.mark_delivered(
+                    request_id, existing, channel=self._client.channel
+                )
                 return
 
         try:
@@ -79,8 +81,16 @@ class DeliveryService:
             )
             return
 
-        await self._requests.mark_delivered(request_id, result.external_reference)
+        await self._requests.mark_delivered(
+            request_id, result.external_reference, channel=self._client.channel
+        )
         logger.info(
             "delivery.delivered",
-            extra={"context": {"request_id": request_id, "destination": destination}},
+            extra={
+                "context": {
+                    "request_id": request_id,
+                    "destination": destination,
+                    "channel": self._client.channel,
+                }
+            },
         )

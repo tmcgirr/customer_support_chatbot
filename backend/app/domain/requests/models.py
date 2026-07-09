@@ -37,6 +37,9 @@ class RequestRecord(BaseModel):
     external_reference: str | None = None
     delivery_attempts: int = 0
     last_delivery_error: str | None = None
+    # Which transport delivered it (simulated/webhook/email) — surfaced in admin so an
+    # operator can see whether a request went out for real or via the mock (V1.5).
+    delivery_channel: str | None = None
     # Set to "deleted" when a verified subject-erasure redacts this request's PII
     # (the skeleton is kept for delivery audit; V6).
     deletion_status: str | None = None

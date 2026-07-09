@@ -92,6 +92,8 @@ export interface AdminRequest {
   contact_company: string | null;
   conversation_id: string;
   destination: string | null;
+  /** Transport that delivered it: simulated (mock) / webhook / email. */
+  delivery_channel: string | null;
   external_reference: string | null;
   last_delivery_error: string | null;
   created_at: string;

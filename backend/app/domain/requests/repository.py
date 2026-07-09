@@ -102,13 +102,16 @@ class RequestRepository:
         )
         return [RequestRecord.model_validate(doc) for doc in docs]
 
-    async def mark_delivered(self, request_id: str, external_reference: str) -> None:
+    async def mark_delivered(
+        self, request_id: str, external_reference: str, *, channel: str | None = None
+    ) -> None:
         await self._collection.update_one(
             {"_id": request_id},
             {
                 "$set": {
                     "status": "delivered",
                     "external_reference": external_reference,
+                    "delivery_channel": channel,
                     "delivered_at": _now(),
                     "last_delivery_error": None,
                 }

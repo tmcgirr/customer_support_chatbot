@@ -95,6 +95,8 @@ class FakeDeliveryClient:
     idempotency probe raise (ambiguous).
     """
 
+    channel = "fake"
+
     def __init__(
         self,
         *,

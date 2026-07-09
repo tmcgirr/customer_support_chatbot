@@ -87,6 +87,7 @@ class AdminRequest(BaseModel):
     contact_company: str | None
     conversation_id: str
     destination: str
+    delivery_channel: str | None = None
     external_reference: str | None = None
     last_delivery_error: str | None = None
     created_at: datetime
@@ -331,6 +332,7 @@ async def list_requests(
                 contact_company=r.contact.company,
                 conversation_id=r.conversation_id,
                 destination=r.destination,
+                delivery_channel=r.delivery_channel,
                 external_reference=r.external_reference,
                 last_delivery_error=r.last_delivery_error,
                 created_at=r.created_at,

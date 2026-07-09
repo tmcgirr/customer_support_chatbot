@@ -5,6 +5,7 @@ This is the ONLY place the application reads environment/`.env` values
 """
 
 from functools import lru_cache
+from typing import Literal
 from urllib.parse import urlsplit
 
 from pydantic import SecretStr, model_validator
@@ -112,6 +113,27 @@ class Settings(BaseSettings):
     # A request still received/delivering this long after creation is reconciled by
     # the delivery sweep (its job crashed/timed-out, or its enqueue was lost).
     delivery_stuck_seconds: int = 900
+
+    # --- Request delivery transport (pluggable; V1.5). 'simulated' (default) is a
+    # functional MOCK: it records what WOULD be sent (visible in admin), needs no creds,
+    # and runs the full pipeline. Flip `delivery_transport` + drop in the matching creds
+    # to send for real (Slack/Teams via webhook, or email). If the selected transport is
+    # misconfigured, the factory FALLS BACK to simulated and logs a warning — so the
+    # wiring is always in place and switching on is a config change, never a code change. ---
+    delivery_transport: Literal["simulated", "webhook", "email"] = "simulated"
+    # Webhook = any inbound endpoint (Slack/Teams incoming webhook, Zapier, a CRM intake
+    # hook). The URL usually embeds a token, so it's a secret.
+    delivery_webhook_url: SecretStr = SecretStr("")
+    delivery_webhook_timeout_seconds: float = 10.0
+    # Email = an SMTP relay (SES / SendGrid / Google Workspace). Uses stdlib smtplib in a
+    # worker thread (no extra dependency, non-blocking).
+    delivery_email_smtp_host: str = ""
+    delivery_email_smtp_port: int = 587
+    delivery_email_smtp_user: str = ""
+    delivery_email_smtp_password: SecretStr = SecretStr("")
+    delivery_email_from: str = ""
+    delivery_email_to: str = ""  # the team inbox that receives request notifications
+    delivery_email_use_tls: bool = True
 
     # --- Data retention (V6). PLACEHOLDER periods pending Legal/Privacy sign-off
     # (doc 06 §6); documented in docs/PRIVACY_NOTICE.md, which MUST match these.
@@ -222,6 +244,23 @@ class Settings(BaseSettings):
         if not origins or bad_origins:
             detail = f"; offending: {bad_origins}" if bad_origins else ""
             problems.append(f"CORS_ORIGINS (must be https non-localhost origins{detail})")
+        # If a REAL delivery transport is selected, its config must be present. Otherwise
+        # the factory would silently fall back to the mock and every inbound lead/ticket
+        # would be dropped while admin shows it "delivered" — so fail closed in non-dev
+        # (dev keeps the permissive fallback). Default transport is 'simulated' (fine).
+        if (
+            self.delivery_transport == "webhook"
+            and not self.delivery_webhook_url.get_secret_value().strip()
+        ):
+            problems.append("DELIVERY_WEBHOOK_URL (required when DELIVERY_TRANSPORT=webhook)")
+        if self.delivery_transport == "email" and not (
+            self.delivery_email_smtp_host.strip()
+            and self.delivery_email_from.strip()
+            and self.delivery_email_to.strip()
+        ):
+            problems.append(
+                "DELIVERY_EMAIL_SMTP_HOST/FROM/TO (required when DELIVERY_TRANSPORT=email)"
+            )
         if problems:
             raise ValueError(
                 f"invalid config for env={self.env!r}: {'; '.join(problems)}. "

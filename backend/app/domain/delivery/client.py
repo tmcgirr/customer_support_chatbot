@@ -32,20 +32,23 @@ class DeliveryError(Exception):
 
 
 class DeliveryClient(Protocol):
-    async def deliver(self, record: RequestRecord) -> DeliveryResult:
-        """Send the request to the destination; return its external reference.
-        Raise ``DeliveryError`` on failure (never a provider-typed exception).
+    # Transport name recorded on the request + shown in admin (simulated/webhook/email).
+    channel: str
 
-        A real adapter MUST pass ``record.reference`` to the destination as a
-        server-side idempotency key so the destination itself dedupes a retried
-        delivery — the ``find_by_reference`` probe is only a best-effort secondary
-        guard and can miss a just-written record under replica lag."""
+    async def deliver(self, record: RequestRecord) -> DeliveryResult:
+        """Send the request to the destination; return its external reference. Raise
+        ``DeliveryError`` on failure (never a provider-typed exception).
+
+        Exactly-once is the adapter's responsibility (invariant #11): a destination
+        that can dedupe should be queried by ``find_by_reference`` before a retry; a
+        destination that CANNOT (webhook/email) must classify any possibly-delivered
+        outcome as ``retryable=False`` so the worker parks it instead of re-sending."""
         ...
 
     async def find_by_reference(self, reference: str) -> str | None:
         """Idempotency probe: return the external reference if this request's local
-        ``reference`` was already delivered to the destination, else None. Used
-        before a retry so a request is delivered at most once (contracts §7)."""
+        ``reference`` was already delivered, else None. Adapters that cannot query
+        their destination return None and rely on deliver()'s classification instead."""
         ...
 
 
@@ -56,6 +59,8 @@ class SimulatedDeliveryClient:
     the full delivery pipeline on staging. It has no external store, so the
     idempotency probe always reports "not found" (a benign no-op; the real
     idempotency behaviour is exercised in tests via a scriptable fake)."""
+
+    channel = "simulated"
 
     async def deliver(self, record: RequestRecord) -> DeliveryResult:
         logger.info(
