@@ -16,8 +16,8 @@ Legend: ✅ MET · 🟡 mechanism met, blocked on an external input · owner in 
 | 2 | Production integrations verified with failure-path tests | 🟡 | Delivery worker with bounded retries → dead-letter → replay; failure-path tests (retry, dead-letter, replay) — `tests/` V4; redeliver verified live (V5). Provider-isolated `DeliveryClient` boundary ready. | Real CRM/scheduler + ticketing destinations + adapters — **Sales / Client Success** |
 | 3 | Role-controlled admin | ✅ | admin/viewer roles; viewer 403 on reveal/redeliver/approve; append-only audit; verified live on staging (V5). | — |
 | 4 | Retention and deletion operational | ✅ | Daily retention sweep + conditional TTL; verified subject-erasure worker; both verified live end-to-end on staging (V6). | Confirm retention PERIODS — **Legal/Privacy** |
-| 5 | Production MongoDB with tested restore | 🟡 | `scripts/backup_mongo.sh` + `restore_mongo.sh`; restore DRILL run on staging — dump → restore into scratch DB → all 7 collection counts matched → scratch dropped. | Provision the prod cluster + schedule backups; Atlas vs self-hosted — **Engineering** |
-| 6 | Staging / production separated | 🟡 | Separate prod artifacts: `docker-compose.prod.yml`, `Caddyfile.prod`, `prod.env.example`; config is fully env-driven (separate DB, OpenAI project, Vector Store, domain); fail-closed guard forbids placeholder/localhost in prod. | Stand up the prod environment (gated on #5 + prod OpenAI project + domain) — **Engineering** |
+| 5 | Production MongoDB with tested restore | ✅ | **Atlas-vs-self-hosted decision RESOLVED: DO Managed MongoDB** (`cadre-staging-db`, nyc3, MongoDB 8; Atlas Search not needed — retrieval is the OpenAI Vector Store). Staging **migrated** onto it via `backup_mongo.sh`→`restore_mongo.sh` (all 7 collection counts matched; cutover proven by a live write landing on the managed cluster). Firewall locked to the droplet. | Provision a **dedicated prod** cluster identically + schedule automated backups + a recurring restore drill (RUNBOOK) — **Engineering** |
+| 6 | Staging / production separated | 🟡 | Separate prod artifacts: `docker-compose.prod.yml`, `Caddyfile.prod`, `prod.env.example`; config fully env-driven; fail-closed guard forbids placeholder/localhost in prod. Staging now runs on its own managed DB (separate from any prod DB) — the migration path is rehearsed. | Stand up the prod environment (needs prod OpenAI project + domain) — **Engineering** |
 | 7 | Edge abuse controls on | 🟡 | App per-IP caps ON (conversation-create, privacy-request); prod Caddy security headers (HSTS, nosniff, referrer, frame policy) — `caddy validate` clean. | Front with a CDN/WAF for volumetric/edge filtering — **Engineering** (provider decision) |
 | 8 | Monitoring live | 🟡 | `GET /api/v1/admin/monitoring` (queue depth, dead-letter, delivery-failed, privacy-failed — no PII) live on staging; structured worker logs emit queue depth + latency; alert thresholds documented in `RUNBOOK_PROD.md`. | Wire an alerting tool to scrape + page — **Engineering** |
 | 9 | Privacy notice matches actual data handling | ✅ | `docs/PRIVACY_NOTICE.md` written FROM the retention config + deletion behavior; retention + erasure verified live (V6). | Legal sign-off on wording + confirmed periods — **Legal/Privacy** |
@@ -42,8 +42,10 @@ authenticated-client / tenancy / private-store boundary — explicitly out of V1
 ## Go / no-go
 
 **Engineering: GO.** The build satisfies every gate item's mechanism, verified live where
-an environment exists. **Launch is gated on the doc 06 §6 decisions** — most critically the
-content approvals (Legal/Marketing/Sales/Security), destination selection (Sales/Client
-Success), and the MongoDB provisioning choice (Engineering). Cut over per
-`docs/DEPLOY_PROD.md`, re-run the golden gate on the prod config, and re-confirm items
-1–2, 5–8 on the real production environment before public traffic.
+an environment exists. The **MongoDB provisioning decision is resolved** (DO Managed MongoDB)
+and rehearsed end-to-end by migrating staging onto a managed cluster. **Launch is now gated on
+the remaining doc 06 §6 decisions** — most critically the content approvals
+(Legal/Marketing/Sales/Security) and destination selection (Sales/Client Success), plus the
+prod environment standup (domain + prod OpenAI project). Cut over per `docs/DEPLOY_PROD.md`,
+re-run the golden gate on the prod config, and re-confirm items 1–2, 6–8 on the real production
+environment before public traffic.

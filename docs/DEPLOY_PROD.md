@@ -13,9 +13,16 @@ Artifacts (`deploy/`): [`docker-compose.prod.yml`](../deploy/docker-compose.prod
 
 ## Prerequisites (owners in doc 06 §6)
 
-- **Managed MongoDB** provisioned with automated backups (Atlas or self-hosted — Engineering
-  decision) and a **tested restore** (`scripts/restore_mongo.sh`, see RUNBOOK). A real,
-  non-localhost `MONGO_URI` with credentials for a dedicated `cadre_chatbot` prod database.
+- **Managed MongoDB** provisioned with automated backups and a **tested restore**
+  (`scripts/restore_mongo.sh`, see RUNBOOK). A real, non-localhost `MONGO_URI` with credentials
+  for a dedicated `cadre_chatbot` prod database. **Decision: DO Managed MongoDB** (Atlas Search is
+  not used — retrieval is the OpenAI Vector Store). Provision co-located with the app; lock the DB
+  firewall to the app host (trusted source). **DO-MongoDB gotchas (learned in the staging
+  migration):** `doctl` cannot fetch/reset a working MongoDB password — take the connection string
+  from the **DO UI → Connection Details** and inject it via a hidden `read -rs` prompt (never in a
+  shell history or chat); the URI contains `&`, so never `. source` it in bash (use
+  `grep '^MONGO_URI=' | cut -d= -f2-`, quoted); set the URI DB path to `/cadre_chatbot` (DO
+  defaults to `/admin`) and keep `authSource=admin`.
 - **Production OpenAI project** + a **separate Vector Store** (never the staging store).
 - **DNS**: an A record for the prod domain → the host (or the DO load balancer).
 - **Secrets** available to inject (prefer a secrets manager over a file on disk).
