@@ -471,3 +471,28 @@ Choices made during implementation that the planning docs did not fully specify
 - **Verified:** golden 35/35 on the real-model config; 257 backend tests; `caddy validate` clean.
   Go/no-go + the full gate→evidence mapping is `docs/V1_EXIT_REPORT.md`. Launch is gated on the
   doc 06 §6 external-owner decisions, not engineering.
+
+## Infra — Staging migrated to DO Managed MongoDB (2026-07-09)
+
+- **Staging now uses DO Managed MongoDB** (`cadre-staging-db`, nyc3, MongoDB 8, single node),
+  reached over the public TLS endpoint with the cluster firewall locked to the `cadre-staging`
+  droplet (trusted source). The in-stack `mongo` container is retained as a fallback until the
+  managed setup is proven over time. Data migrated with `backup_mongo.sh`/`restore_mongo.sh`
+  (dump → restore → all 7 collection counts matched); cutover proven by a live write landing on
+  the managed cluster (13→14) while the container stayed at 13. Atlas Search is NOT needed —
+  retrieval is the OpenAI Vector Store; Mongo is a plain document store (confirmed by grep).
+- **Compose cutover mechanism:** `docker-compose.staging.yml` sets
+  `MONGO_URI: ${MONGO_URI:-mongodb://mongo:27017/cadre_chatbot}` (requires `--env-file`), so the
+  managed URI in `staging.env` wins when present and the container is the fallback otherwise —
+  a one-line, reversible cutover.
+- **Operational gotchas (also apply to prod cutover — see DEPLOY_PROD/RUNBOOK):**
+  1. `doctl` cannot retrieve or reliably reset a **MongoDB** cluster's password — `connection`
+     returns a URI with NO password, and `user reset` hands back a value that does not
+     authenticate. Use the **DO UI → Connection Details** connection string as the source of
+     truth; transfer it to the host via a hidden `read -rs` prompt (never through chat).
+  2. The DO Mongo URI contains `&` (query params). Do NOT `. source` it in bash — `&` is a
+     background operator and truncates the value. Read it with `grep '^MONGO_URI=' | cut -d= -f2-`
+     and always quote it. `docker compose` `env_file:` parses it correctly (the app was fine).
+  3. Point the URI's path at `cadre_chatbot` (DO defaults to `/admin`), keep `authSource=admin`.
+  4. nyc1 managed-MongoDB provisioning was pathologically slow (>50 min) on 2026-07-09; nyc3
+     provisioned normally. Same-metro, so co-location latency is a non-issue.
