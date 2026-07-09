@@ -9,6 +9,7 @@ Gate (unchanged, CI-wired):
 Developer/test tooling (evaluate performance + routing across prompts/models — never in the
 app or admin portal):
     uv run python -m eval.run --report out.html            # gate + a self-contained HTML report
+    uv run python -m eval.run --pdf out.pdf                # gate + a downloadable PDF report
     uv run python -m eval.run --json out.json              # gate + structured results JSON
     uv run python -m eval.run --model MODEL --prompt-version sys-v2   # one-off override
     uv run python -m eval.run --compare configs.yaml --report out.html  # A-B configs, rank, report
@@ -189,13 +190,16 @@ async def run_config(
     return RunResult(config=config, generated_at=datetime.now(UTC), cases=results)
 
 
-def _write_output(path_str: str, content: str) -> str:
-    """Write an output artifact, creating parent dirs. Returns a status line; an I/O error
-    is reported (not raised) so it can never flip the gate's exit code."""
+def _write_output(path_str: str, content: str | bytes) -> str:
+    """Write an output artifact (text or bytes), creating parent dirs. Returns a status line;
+    an I/O error is reported (not raised) so it can never flip the gate's exit code."""
     try:
         path = Path(path_str)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        if isinstance(content, bytes):
+            path.write_bytes(content)
+        else:
+            path.write_text(content, encoding="utf-8")
         return f"wrote {path_str}"
     except OSError as exc:
         return f"WARNING: could not write {path_str}: {exc}"
@@ -225,6 +229,7 @@ async def main(
     show: bool = False,
     compare: str = "",
     report: str = "",
+    pdf_out: str = "",
     json_out: str = "",
     model: str = "",
     prompt_version: str = "",
@@ -272,6 +277,10 @@ async def main(
         print(await asyncio.to_thread(_write_output, json_out, payload))
     if report:
         print(await asyncio.to_thread(_write_output, report, render_html(runs)))
+    if pdf_out:
+        from eval.pdf import render_pdf
+
+        print(await asyncio.to_thread(_write_output, pdf_out, render_pdf(runs)))
 
     if gated and any(not c.passed for r in runs for c in r.cases):
         return 1
@@ -285,6 +294,7 @@ def _cli() -> int:
     parser.add_argument("--show", action="store_true", help="Print each case's response + intent")
     parser.add_argument("--compare", default="", help="YAML of named configs to A-B + rank")
     parser.add_argument("--report", default="", help="Write a self-contained HTML report here")
+    parser.add_argument("--pdf", dest="pdf_out", default="", help="Write a PDF report here")
     parser.add_argument("--json", dest="json_out", default="", help="Write results JSON here")
     parser.add_argument("--model", default="", help="Override the model for a one-off run")
     parser.add_argument(
@@ -298,6 +308,7 @@ def _cli() -> int:
             show=args.show,
             compare=args.compare,
             report=args.report,
+            pdf_out=args.pdf_out,
             json_out=args.json_out,
             model=args.model,
             prompt_version=args.prompt_version,

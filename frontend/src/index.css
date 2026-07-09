@@ -1,36 +1,47 @@
-/* Cadre AI widget — global design tokens + shell styles.
+/* Cadre AI widget — global design tokens + shell + conversation styles.
  *
  * The widget renders inside a TRANSPARENT iframe; only the launcher and the panel
  * are visible, so the page background must stay transparent to let the host show
- * through. Light theme, calm/business-like, deep-indigo accent, system fonts. */
+ * through. V2 look: dark "slate" theme — deep slate surfaces, light text, a single
+ * indigo accent, generous spacing. Sleek and calm; system fonts throughout. */
 
 :root {
   /* Typography */
   --cadre-font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 
-  /* Brand — deep indigo / navy */
-  --cadre-accent: #2e3a8c;
-  --cadre-accent-strong: #232d70;
+  /* Brand accent — indigo, tuned to read on dark slate */
+  --cadre-accent: #6366f1;
+  --cadre-accent-hover: #7c83f7;
   --cadre-accent-contrast: #ffffff;
 
-  /* Surfaces & text */
-  --cadre-surface: #ffffff;
-  --cadre-surface-muted: #f4f5fb;
-  --cadre-border: #e3e5f0;
-  --cadre-text: #1a1a2e;
-  --cadre-text-muted: #5a6072;
-  --cadre-danger: #b00020;
+  /* Slate surfaces (dark). --cadre-surface kept as an alias for the panel base. */
+  --cadre-panel: #0f172a; /* slate-900 — panel body */
+  --cadre-surface: #0f172a;
+  --cadre-elevated: #16223c; /* header / hover wash */
+  --cadre-input: #1e293b; /* slate-800 — composer + fields */
+  --cadre-user-bubble: #2b3a55; /* user message bubble */
+
+  /* Lines & text */
+  --cadre-border: #24304a; /* subtle dividers */
+  --cadre-border-strong: #35415c; /* input / chip outlines */
+  --cadre-text: #e6edf6;
+  --cadre-text-muted: #94a3b8;
+  --cadre-text-subtle: #64748b;
+  --cadre-danger: #f87171;
+  --cadre-danger-bg: rgba(248, 113, 113, 0.12);
+  --cadre-danger-border: rgba(248, 113, 113, 0.35);
 
   /* Shape & depth */
-  --cadre-radius-sm: 8px;
-  --cadre-radius-md: 14px;
-  --cadre-radius-lg: 20px;
-  --cadre-shadow: 0 14px 44px rgba(20, 23, 61, 0.2);
-  --cadre-focus-ring: 0 0 0 3px rgba(46, 58, 140, 0.4);
+  --cadre-radius-sm: 10px;
+  --cadre-radius-md: 16px;
+  --cadre-radius-lg: 22px;
+  --cadre-radius-pill: 999px;
+  --cadre-shadow: 0 20px 55px -14px rgba(2, 6, 23, 0.7);
+  --cadre-focus-ring: 0 0 0 3px rgba(99, 102, 241, 0.45);
 
   color: var(--cadre-text);
   font-family: var(--cadre-font);
-  line-height: 1.5;
+  line-height: 1.55;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -84,19 +95,24 @@ body {
   width: 60px;
   height: 60px;
   padding: 0;
-  border: none;
+  border: 1px solid var(--cadre-border-strong);
   border-radius: 50%;
-  background: var(--cadre-accent);
-  color: var(--cadre-accent-contrast);
+  background: radial-gradient(circle at 30% 25%, #1e2a44 0%, #0f172a 70%);
+  color: #eef2ff;
   box-shadow: var(--cadre-shadow);
   cursor: pointer;
   transition:
-    background-color 0.15s ease,
-    transform 0.15s ease;
+    transform 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .cadre-launcher:hover {
-  background: var(--cadre-accent-strong);
+  border-color: var(--cadre-accent);
+  box-shadow:
+    var(--cadre-shadow),
+    0 0 0 4px rgba(99, 102, 241, 0.14);
+  transform: translateY(-1px);
 }
 
 .cadre-launcher:active {
@@ -117,12 +133,12 @@ body {
 .cadre-panel {
   display: flex;
   flex-direction: column;
-  width: 384px;
+  width: 396px;
   max-width: calc(100vw - 40px);
-  height: 620px;
+  height: 640px;
   max-height: calc(100vh - 120px);
   overflow: hidden;
-  background: var(--cadre-surface);
+  background: var(--cadre-panel);
   border: 1px solid var(--cadre-border);
   border-radius: var(--cadre-radius-lg);
   box-shadow: var(--cadre-shadow);
@@ -136,11 +152,14 @@ body {
   box-shadow: var(--cadre-shadow), var(--cadre-focus-ring);
 }
 
+/* The content region is a flex column with NO scroll of its own — each child
+   (conversation or a form) owns its scrolling so the composer can stay pinned. */
 .cadre-panel__content {
+  display: flex;
   flex: 1 1 auto;
   min-height: 0;
-  overflow-y: auto;
-  padding: 16px;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 /* --------------------------------------------------------------------- header */
@@ -151,31 +170,64 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 14px 16px;
-  background: var(--cadre-accent);
-  color: var(--cadre-accent-contrast);
+  padding: 13px 16px;
+  background: var(--cadre-elevated);
+  color: var(--cadre-text);
+  border-bottom: 1px solid var(--cadre-border);
 }
 
 .cadre-header__title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
+}
+
+.cadre-header__avatar {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  color: #ffffff;
+  background: linear-gradient(140deg, #6366f1 0%, #4338ca 100%);
+  box-shadow: 0 2px 8px rgba(67, 56, 202, 0.45);
+}
+
+/* Small "online" presence dot on the avatar (decorative). */
+.cadre-header__avatar::after {
+  content: "";
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #34d399;
+  border: 2px solid var(--cadre-elevated);
 }
 
 .cadre-header__name {
   font-size: 15px;
   font-weight: 600;
   letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .cadre-header__badge {
   padding: 2px 7px;
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.08em;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.18);
+  letter-spacing: 0.09em;
+  border-radius: var(--cadre-radius-pill);
+  color: var(--cadre-text-muted);
+  background: rgba(148, 163, 184, 0.14);
+  border: 1px solid var(--cadre-border-strong);
 }
 
 .cadre-header__close {
@@ -188,18 +240,113 @@ body {
   border: none;
   border-radius: 8px;
   background: transparent;
-  color: inherit;
+  color: var(--cadre-text-muted);
   cursor: pointer;
-  transition: background-color 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
 }
 
 .cadre-header__close:hover {
-  background: rgba(255, 255, 255, 0.16);
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--cadre-text);
 }
 
 .cadre-header__close:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.6);
+  box-shadow: var(--cadre-focus-ring);
+}
+
+/* --------------------------------------------------------- conversation layout */
+
+.cadre-conversation {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+}
+
+/* The scrolling transcript region. */
+.cadre-conversation-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 16px 8px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--cadre-border-strong) transparent;
+}
+
+.cadre-conversation-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.cadre-conversation-scroll::-webkit-scrollbar-thumb {
+  background: var(--cadre-border-strong);
+  border-radius: 999px;
+}
+
+.cadre-conversation-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.cadre-message-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.cadre-message-list-item {
+  margin: 0;
+}
+
+/* --------------------------------------------------------------- message rows */
+
+.cadre-message {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* User: right-aligned bubble. Assistant: left-aligned plain text, full width. */
+.cadre-message-user {
+  align-items: flex-end;
+}
+
+.cadre-message-assistant {
+  align-items: stretch;
+}
+
+.cadre-message-body {
+  font-size: 14.5px;
+}
+
+.cadre-message-user .cadre-message-body {
+  max-width: 86%;
+  width: fit-content;
+  padding: 10px 14px;
+  border-radius: 18px 18px 5px 18px;
+  background: var(--cadre-user-bubble);
+  color: var(--cadre-text);
+}
+
+.cadre-message-assistant .cadre-message-body {
+  max-width: 100%;
+  color: var(--cadre-text);
+}
+
+.cadre-message-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.cadre-message-incomplete {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--cadre-text-subtle);
+  font-style: italic;
 }
 
 /* -------------------------------------------------------- streaming indicator */
@@ -225,6 +372,310 @@ body {
   }
 }
 
+/* --------------------------------------------------------------- citations */
+
+.cadre-citations {
+  margin-top: 2px;
+}
+
+.cadre-citations-label {
+  margin: 0 0 4px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--cadre-text-subtle);
+}
+
+.cadre-citations ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.cadre-citations a {
+  color: var(--cadre-accent);
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.cadre-citations a:hover {
+  text-decoration: underline;
+}
+
+/* ------------------------------------------------------------ suggested chips */
+
+.cadre-suggested-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.cadre-chip {
+  font: inherit;
+  font-size: 13px;
+  padding: 7px 13px;
+  border-radius: var(--cadre-radius-pill);
+  border: 1px solid var(--cadre-border-strong);
+  background: transparent;
+  color: var(--cadre-text);
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.1s ease;
+}
+
+.cadre-chip:hover {
+  background: var(--cadre-elevated);
+  border-color: var(--cadre-accent);
+}
+
+.cadre-chip:active {
+  transform: scale(0.97);
+}
+
+.cadre-chip:focus-visible {
+  outline: none;
+  box-shadow: var(--cadre-focus-ring);
+}
+
+/* ------------------------------------------------------------- welcome state */
+
+.cadre-welcome {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 2px 8px;
+}
+
+.cadre-welcome-text {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--cadre-text);
+}
+
+.cadre-welcome-disclosure {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--cadre-text-muted);
+}
+
+.cadre-loading {
+  margin: 0;
+  padding: 8px 2px;
+  font-size: 14px;
+  color: var(--cadre-text-muted);
+}
+
+/* ------------------------------------------------------------------ feedback */
+
+.cadre-feedback,
+.cadre-feedback-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.cadre-feedback-prompt {
+  font-size: 12.5px;
+  color: var(--cadre-text-subtle);
+  margin-right: 2px;
+}
+
+.cadre-feedback-thumb {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.cadre-feedback-thumb:hover {
+  background: var(--cadre-elevated);
+  border-color: var(--cadre-border-strong);
+}
+
+.cadre-feedback-thumb:focus-visible {
+  outline: none;
+  box-shadow: var(--cadre-focus-ring);
+}
+
+.cadre-feedback-ack {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  color: var(--cadre-text-muted);
+}
+
+/* ------------------------------------------------------------------ composer */
+
+/* The composer is a floating rounded "pill" pinned below the transcript. The form
+   itself is the pill; focus-within lights it up. */
+.cadre-composer {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin: 8px 12px 12px;
+  padding: 6px 6px 6px 16px;
+  background: var(--cadre-input);
+  border: 1px solid var(--cadre-border-strong);
+  border-radius: 24px;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.cadre-composer:focus-within {
+  border-color: var(--cadre-accent);
+  box-shadow: var(--cadre-focus-ring);
+}
+
+.cadre-composer-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--cadre-text);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  resize: none;
+  padding: 8px 0;
+  max-height: 120px;
+}
+
+.cadre-composer-input::placeholder {
+  color: var(--cadre-text-subtle);
+}
+
+.cadre-composer-input:disabled {
+  color: var(--cadre-text-subtle);
+  cursor: not-allowed;
+}
+
+.cadre-composer-send {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--cadre-accent);
+  color: var(--cadre-accent-contrast);
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    transform 0.1s ease;
+}
+
+.cadre-composer-send:hover:not(:disabled) {
+  background: var(--cadre-accent-hover);
+}
+
+.cadre-composer-send:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.cadre-composer-send:disabled {
+  background: var(--cadre-border-strong);
+  color: var(--cadre-text-subtle);
+  cursor: default;
+}
+
+.cadre-composer-send:focus-visible {
+  outline: none;
+  box-shadow: var(--cadre-focus-ring);
+}
+
+/* -------------------------------------------------------------- error banner */
+
+.cadre-error-banner {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 12px 8px;
+  padding: 10px 12px;
+  background: var(--cadre-danger-bg);
+  border: 1px solid var(--cadre-danger-border);
+  border-radius: var(--cadre-radius-sm);
+}
+
+.cadre-error-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #fca5a5;
+}
+
+.cadre-error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cadre-error-retry,
+.cadre-error-dismiss {
+  font: inherit;
+  font-size: 12.5px;
+  padding: 5px 11px;
+  border-radius: var(--cadre-radius-pill);
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.cadre-error-retry {
+  border: 1px solid var(--cadre-danger-border);
+  background: transparent;
+  color: #fecaca;
+}
+
+.cadre-error-retry:hover {
+  background: rgba(248, 113, 113, 0.16);
+}
+
+.cadre-error-dismiss {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--cadre-text-muted);
+}
+
+.cadre-error-dismiss:hover {
+  color: var(--cadre-text);
+}
+
+.cadre-error-retry:focus-visible,
+.cadre-error-dismiss:focus-visible {
+  outline: none;
+  box-shadow: var(--cadre-focus-ring);
+}
+
 /* --------------------------------------------------------------- privacy line */
 
 .cadre-privacy {
@@ -233,9 +684,18 @@ body {
   padding: 10px 16px;
   font-size: 11px;
   line-height: 1.45;
-  color: var(--cadre-text-muted);
-  background: var(--cadre-surface-muted);
+  color: var(--cadre-text-subtle);
+  background: transparent;
   border-top: 1px solid var(--cadre-border);
+}
+
+.cadre-privacy a {
+  color: var(--cadre-text-muted);
+  text-decoration: underline;
+}
+
+.cadre-privacy a:hover {
+  color: var(--cadre-text);
 }
 
 /* --------------------------------------------------------------------- mobile */

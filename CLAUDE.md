@@ -46,6 +46,10 @@ uv run python scripts/sweep_locks.py          # release leaked run locks (also a
 # prompt/model/canonical/content change is promoted (staging → production).
 uv run python -m eval.run                     # real model gate (spends API $)
 uv run python -m eval.run --show              # + print each case's response text + routed intent
+# Dev/test tool (standalone, outside the app — tester guide: docs/EVAL_TESTER_GUIDE.md):
+uv run python -m eval.run --report r.html --pdf r.pdf   # shareable HTML + PDF report
+uv run python -m eval.run --model M --prompt-version sys-v2   # one-off model/prompt A-B
+uv run python -m eval.run --compare eval/configs.yaml --report r.html   # rank configs + diff
 ```
 
 ## Architecture invariants (do not violate)

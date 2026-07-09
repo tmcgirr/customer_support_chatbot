@@ -685,3 +685,21 @@ Choices made during implementation that the planning docs did not fully specify
   approved `ai_maturity_index` canonical answer (unchanged) — it never administers an assessment.
 - **Verified:** 358 backend tests (scoring/ranking, report rendering + HTML-escaping, config load,
   run_config plumbing smoke) + a live CLI smoke that produced a valid HTML report. ruff + mypy clean.
+
+## V1.5 — Eval: PDF report + tester user guide (2026-07-09)
+
+- **PDF output** (`--pdf out.pdf`): `eval/pdf.py` renders a downloadable, shareable PDF (ranking +
+  per-config score card + per-case status/routing/latency/failures) via **fpdf2** — pure-Python,
+  added as a **dev-only dependency** (never shipped to prod; the eval never runs in prod). Non-latin
+  chars in model output are sanitized so a stray unicode char can't crash the report. `--report`
+  (HTML), `--pdf`, `--json` can be combined; `_write_output` handles bytes + text and still can't
+  flip the gate's exit code.
+- **Tester user guide** (`docs/EVAL_TESTER_GUIDE.md`): what the benchmark is (35 golden cases,
+  assertion types, categories), how a tester starts a run, adjusts model / prompt (versioned
+  sys-vN.md) / cases, gets HTML+PDF+JSON reports, reads the ranking + diff matrix, and the
+  versioned→gated→reviewed→promoted change workflow. Pointer added in CLAUDE.md.
+- **Design reaffirmed:** the eval is standalone CLI dev tooling that only READS the live prompt/
+  model/canonical (never mutates them); prompt/model changes are reviewed code changes, not live
+  edits. (The earlier local web-UI experiment was reverted as an unneeded second leg.)
+- **Verified:** 366 backend tests (PDF valid/comparison/unicode/empty) + a live CLI smoke that wrote
+  a valid %PDF + JSON. ruff + mypy clean.

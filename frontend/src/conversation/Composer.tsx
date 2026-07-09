@@ -12,6 +12,21 @@ interface ComposerProps {
   inputRef?: RefObject<HTMLTextAreaElement>;
 }
 
+/** Upward arrow send glyph (decorative; the button carries the accessible name). */
+function SendIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true" focusable="false">
+      <path
+        d="M12 19V5M12 5l-6 6M12 5l6 6"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export function Composer({ onSend, disabled, placeholder, inputRef }: ComposerProps) {
   const [value, setValue] = useState("");
 
@@ -54,7 +69,7 @@ export function Composer({ onSend, disabled, placeholder, inputRef }: ComposerPr
         aria-label="Send message"
         disabled={disabled || value.trim().length === 0}
       >
-        Send
+        <SendIcon />
       </button>
     </form>
   );
