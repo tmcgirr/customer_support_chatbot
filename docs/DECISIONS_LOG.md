@@ -655,3 +655,15 @@ Choices made during implementation that the planning docs did not fully specify
   (`requested ⊆ engaged ⊆ asked ⊆ visited` always). ("unset" bucket for unlabeled conversations was
   reviewed and judged correct — kept.)
 - **Verified:** 338 backend (incl. single-turn-conversion monotonicity) + 48 frontend tests.
+
+## V1.5 — Conversation summaries (2026-07-09)
+
+- **Async TL;DR + key-points digest** per ended conversation (`summarize_conversations` worker
+  job → `ConversationSummarizer`, mirrors the labeler: per-call timeout + budget, model failure
+  skips/retries, idempotent). Admin Conversations list shows the TL;DR; detail shows the digest.
+- **Adversarial-review fix (HIGH, 1 root cause):** the model summary can echo a visitor's
+  email/phone from the transcript, and it was returned UNMASKED in the list + detail while the
+  transcript beside it is masked — a default-masking / audited-reveal violation (contracts §10,
+  invariant #12), exposing raw PII even to the viewer role. Now the tldr + every key_point run
+  through `mask_pii_in_text` in both endpoints (unmasked stays gated behind the audited reveal).
+- **Verified:** 345 backend (incl. summary-masking) + 49 frontend tests.

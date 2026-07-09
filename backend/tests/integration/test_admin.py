@@ -68,8 +68,9 @@ async def test_conversation_list_and_detail_expose_summary(
             "status": "completed",
             "message_count": 2,
             "summary": {
-                "tldr": "Asked about pricing.",
-                "key_points": ["pricing", "no public rates"],
+                # PII the model echoed from the transcript — must be MASKED by default.
+                "tldr": "Asked about pricing; email ada@acme.com.",
+                "key_points": ["pricing", "follow up ada@acme.com"],
                 "summarized_at": now,
             },
             "messages": [
@@ -87,12 +88,13 @@ async def test_conversation_list_and_detail_expose_summary(
     )
     listed = await client.get("/api/v1/admin/conversations", auth=ADMIN_AUTH)
     item = next(c for c in listed.json()["conversations"] if c["conversation_id"] == "cnv_sum")
-    assert item["summary"] == "Asked about pricing."
+    assert "ada@acme.com" not in item["summary"] and "a***@acme.com" in item["summary"]
 
     detail = await client.get("/api/v1/admin/conversations/cnv_sum", auth=ADMIN_AUTH)
     body = detail.json()
-    assert body["summary"] == "Asked about pricing."
-    assert body["key_points"] == ["pricing", "no public rates"]
+    assert "ada@acme.com" not in body["summary"] and "a***@acme.com" in body["summary"]
+    assert all("ada@acme.com" not in p for p in body["key_points"])
+    assert any("a***@acme.com" in p for p in body["key_points"])
 
 
 async def test_conversation_detail_shows_trace_metadata(

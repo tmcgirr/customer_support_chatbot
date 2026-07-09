@@ -400,7 +400,9 @@ async def list_conversations(_admin: AdminDep, repo: RepoDep) -> ConversationLis
                 status=c.status,
                 outcome=c.outcome,
                 message_count=c.message_count,
-                summary=c.summary.tldr if c.summary else None,
+                # Mask PII by default like every other free-text admin field — a model
+                # summary can echo an email/phone the visitor typed (contracts §10, #12).
+                summary=mask_pii_in_text(c.summary.tldr) if c.summary else None,
                 started_at=c.started_at,
                 last_activity_at=c.last_activity_at,
             )
@@ -420,8 +422,14 @@ async def conversation_detail(
         conversation_id=conversation.id,
         status=conversation.status,
         outcome=conversation.outcome,
-        summary=conversation.summary.tldr if conversation.summary else None,
-        key_points=conversation.summary.key_points if conversation.summary else [],
+        # Masked by default (the summary is derived from the transcript, which is masked
+        # right below); the unmasked transcript is only via the audited reveal endpoint.
+        summary=mask_pii_in_text(conversation.summary.tldr) if conversation.summary else None,
+        key_points=(
+            [mask_pii_in_text(p) for p in conversation.summary.key_points]
+            if conversation.summary
+            else []
+        ),
         started_at=conversation.started_at,
         messages=[
             AdminMessage(
