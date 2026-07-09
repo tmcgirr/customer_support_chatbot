@@ -11,6 +11,7 @@ import Audit from "./Audit";
 import Canonical from "./Canonical";
 import Conversations from "./Conversations";
 import Dashboard from "./Dashboard";
+import Funnel from "./Funnel";
 import Insights from "./Insights";
 import KnowledgeSources from "./KnowledgeSources";
 import Privacy from "./Privacy";
@@ -20,6 +21,7 @@ import Unresolved from "./Unresolved";
 type Tab =
   | "dashboard"
   | "insights"
+  | "funnel"
   | "conversations"
   | "requests"
   | "knowledge"
@@ -31,6 +33,7 @@ type Tab =
 const TABS: { id: Tab; label: string }[] = [
   { id: "dashboard", label: "Dashboard" },
   { id: "insights", label: "Insights" },
+  { id: "funnel", label: "Funnel" },
   { id: "conversations", label: "Conversations" },
   { id: "requests", label: "Requests" },
   { id: "knowledge", label: "Knowledge" },
@@ -146,6 +149,7 @@ function Shell({
         {tab === "insights" && (
           <Insights key={viewKey} client={client} role={role} onAuthError={onSignOut} />
         )}
+        {tab === "funnel" && <Funnel key={viewKey} client={client} onAuthError={onSignOut} />}
         {tab === "conversations" && (
           <Conversations key={viewKey} client={client} role={role} onAuthError={onSignOut} />
         )}

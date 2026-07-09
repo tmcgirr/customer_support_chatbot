@@ -396,6 +396,33 @@ class ConversationRepository:
             }
         )
 
+    async def funnel(self, field: str | None) -> dict[str, dict[str, int]]:
+        """Conversion-funnel stage counts, grouped by ``field`` (e.g. ``labels.topic`` /
+        ``labels.intent``) or a single ``"all"`` bucket when ``field`` is None. Stages:
+        visited (any conversation) → asked (≥1 user message) → engaged (≥2, multi-turn) →
+        requested (converted to a contact request, via the outcome). A missing group value
+        (unlabeled) is bucketed as ``"unset"``."""
+        conversion = list(REQUEST_CONVERSION_OUTCOMES)
+        group_id: Any = f"${field}" if field is not None else "all"
+        pipeline: list[dict[str, Any]] = [
+            {
+                "$group": {
+                    "_id": group_id,
+                    "visited": {"$sum": 1},
+                    "asked": {"$sum": {"$cond": [{"$gte": ["$message_count", 1]}, 1, 0]}},
+                    "engaged": {"$sum": {"$cond": [{"$gte": ["$message_count", 2]}, 1, 0]}},
+                    "requested": {"$sum": {"$cond": [{"$in": ["$outcome", conversion]}, 1, 0]}},
+                }
+            }
+        ]
+        out: dict[str, dict[str, int]] = {}
+        for doc in await self._collection.aggregate(pipeline).to_list(length=None):
+            key = str(doc["_id"]) if doc["_id"] is not None else "unset"
+            out[key] = {
+                stage: int(doc[stage]) for stage in ("visited", "asked", "engaged", "requested")
+            }
+        return out
+
     # --- Read-only admin queries ---
 
     async def total(self) -> int:

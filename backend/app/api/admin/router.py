@@ -62,6 +62,21 @@ class DashboardResponse(BaseModel):
     unresolved_questions: int
 
 
+class FunnelStage(BaseModel):
+    """Conversion funnel: visited → asked → engaged → requested (contact)."""
+
+    visited: int
+    asked: int
+    engaged: int
+    requested: int
+
+
+class FunnelResponse(BaseModel):
+    overall: FunnelStage
+    by_topic: dict[str, FunnelStage]
+    by_intent: dict[str, FunnelStage]
+
+
 class ConversationSummary(BaseModel):
     conversation_id: str
     status: str
@@ -352,6 +367,23 @@ async def dashboard(
             by_status=await request_repo.count_by("status"),
         ),
         unresolved_questions=await repo.count_unsupported(),
+    )
+
+
+_EMPTY_FUNNEL = {"visited": 0, "asked": 0, "engaged": 0, "requested": 0}
+
+
+@router.get("/funnel", response_model=FunnelResponse)
+async def funnel(_admin: AdminDep, repo: RepoDep) -> FunnelResponse:
+    """Conversion funnel (visited → asked → engaged → requested), overall and broken down
+    by conversation topic + intent. Computed live from conversation counts (no PII)."""
+    overall = (await repo.funnel(None)).get("all", _EMPTY_FUNNEL)
+    by_topic = await repo.funnel("labels.topic")
+    by_intent = await repo.funnel("labels.intent")
+    return FunnelResponse(
+        overall=FunnelStage(**overall),
+        by_topic={k: FunnelStage(**v) for k, v in by_topic.items()},
+        by_intent={k: FunnelStage(**v) for k, v in by_intent.items()},
     )
 
 

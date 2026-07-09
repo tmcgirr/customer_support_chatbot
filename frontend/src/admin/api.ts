@@ -234,6 +234,20 @@ export interface UnresolvedResponse {
   questions: UnresolvedQuestion[];
 }
 
+/** Conversion funnel: visited → asked → engaged → requested (contact). */
+export interface FunnelStage {
+  visited: number;
+  asked: number;
+  engaged: number;
+  requested: number;
+}
+
+export interface FunnelResponse {
+  overall: FunnelStage;
+  by_topic: Record<string, FunnelStage>;
+  by_intent: Record<string, FunnelStage>;
+}
+
 export interface PrivacyRequest {
   request_id: string;
   type: "access" | "deletion";
@@ -264,6 +278,7 @@ export interface AdminClient {
   getConversation(id: string): Promise<ConversationDetailResponse>;
   listRequests(filters?: RequestFilters): Promise<RequestsResponse>;
   listUnresolved(): Promise<UnresolvedResponse>;
+  getFunnel(): Promise<FunnelResponse>;
   listCanonical(): Promise<CanonicalResponse>;
   listAudit(): Promise<AuditResponse>;
   listPrivacyRequests(): Promise<PrivacyRequestsResponse>;
@@ -364,6 +379,7 @@ export function createAdminClient(creds: AdminCreds): AdminClient {
       return request<RequestsResponse>(`/requests${query ? `?${query}` : ""}`);
     },
     listUnresolved: () => request<UnresolvedResponse>("/unresolved-questions"),
+    getFunnel: () => request<FunnelResponse>("/funnel"),
     listCanonical: () => request<CanonicalResponse>("/canonical"),
     listAudit: () => request<AuditResponse>("/audit"),
     listPrivacyRequests: () => request<PrivacyRequestsResponse>("/privacy-requests"),

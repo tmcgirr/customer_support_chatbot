@@ -29,6 +29,7 @@ const getLatestInsights = vi.fn();
 const listInsightsReports = vi.fn();
 const getInsightsReport = vi.fn();
 const runInsights = vi.fn();
+const getFunnel = vi.fn();
 
 vi.mock("./api", () => ({
   createAdminClient: () => ({
@@ -55,6 +56,7 @@ vi.mock("./api", () => ({
     listInsightsReports,
     getInsightsReport,
     runInsights,
+    getFunnel,
   }),
   AdminAuthError: class AdminAuthError extends Error {},
   AdminForbiddenError: class AdminForbiddenError extends Error {},
@@ -184,6 +186,11 @@ beforeEach(() => {
   });
   getInsightsReport.mockResolvedValue(INSIGHTS_REPORT);
   runInsights.mockResolvedValue({ ok: true, detail: "queued" });
+  getFunnel.mockResolvedValue({
+    overall: { visited: 50, asked: 40, engaged: 25, requested: 8 },
+    by_topic: { pricing: { visited: 20, asked: 18, engaged: 12, requested: 5 } },
+    by_intent: { evaluate: { visited: 30, asked: 25, engaged: 15, requested: 6 } },
+  });
   verifyPrivacyRequest.mockResolvedValue({ ok: true, detail: "verified" });
   revealRequest.mockResolvedValue({
     request_id: "req_1",
@@ -323,6 +330,19 @@ describe("AdminApp", () => {
     // approveKnowledge(source_id, reason).
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     await waitFor(() => expect(approveKnowledge).toHaveBeenCalledWith("kbs_1", "audit reason"));
+  });
+
+  it("renders the conversion funnel with overall + topic breakdown", async () => {
+    render(<AdminApp />);
+    signIn();
+    await screen.findByText("admin (admin)");
+
+    fireEvent.click(screen.getByRole("button", { name: "Funnel" }));
+    expect(await screen.findByText("Conversion funnel")).toBeInTheDocument();
+    // Overall funnel counts + the topic breakdown row.
+    expect(screen.getByText("50 (100%)")).toBeInTheDocument(); // visited
+    expect(screen.getByText("8 (16%)")).toBeInTheDocument(); // requested / visited
+    expect(screen.getByText("pricing")).toBeInTheDocument();
   });
 
   it("shows the insights report and lets an admin approve a proposed FAQ", async () => {
