@@ -173,6 +173,41 @@ export interface KnowledgeSourcesResponse {
   sources: KnowledgeSource[];
 }
 
+/** A cluster of near-identical visitor questions within an insights report. */
+export interface InsightsCluster {
+  label: string;
+  representative_question: string;
+  sample_questions: string[];
+  size: number;
+  dominant_topic: string | null;
+  coverage: "covered" | "unclear" | "missing" | string;
+  conversation_ids: string[];
+  proposed_question: string | null;
+  proposed_answer: string | null;
+  /** The canonical DRAFT intent to Approve (via the existing gate), if auto-drafted. */
+  proposed_canonical_intent: string | null;
+}
+
+export interface InsightsReport {
+  period_type: string;
+  period_key: string;
+  generated_at: string;
+  window_start: string;
+  window_end: string;
+  conversations_analyzed: number;
+  clusters: InsightsCluster[];
+  summary: string;
+}
+
+export interface InsightsReportItem {
+  report_id: string;
+  period_type: string;
+  period_key: string;
+  generated_at: string;
+  conversations_analyzed: number;
+  cluster_count: number;
+}
+
 export interface AuditEntry {
   actor: string;
   role: string;
@@ -247,6 +282,11 @@ export interface AdminClient {
   approveKnowledge(sourceId: string, reason: string): Promise<KnowledgeSource>;
   removeKnowledge(sourceId: string, reason: string): Promise<KnowledgeSource>;
   replaceKnowledge(sourceId: string, file: File, reason: string): Promise<KnowledgeSource>;
+  // Conversation insights (V1.5).
+  getLatestInsights(): Promise<{ report: InsightsReport | null }>;
+  listInsightsReports(): Promise<{ reports: InsightsReportItem[] }>;
+  getInsightsReport(reportId: string): Promise<InsightsReport>;
+  runInsights(): Promise<ActionResult>; // admin-only; enqueues a background run
 }
 
 function basicHeader(creds: AdminCreds): string {
@@ -378,5 +418,10 @@ export function createAdminClient(creds: AdminCreds): AdminClient {
         form,
       );
     },
+    getLatestInsights: () => request<{ report: InsightsReport | null }>("/insights"),
+    listInsightsReports: () => request<{ reports: InsightsReportItem[] }>("/insights/reports"),
+    getInsightsReport: (reportId: string) =>
+      request<InsightsReport>(`/insights/reports/${encodeURIComponent(reportId)}`),
+    runInsights: () => request<ActionResult>("/insights/run", { method: "POST" }),
   };
 }

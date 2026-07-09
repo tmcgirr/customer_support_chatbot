@@ -273,6 +273,38 @@ table {
   margin-right: 12px;
 }
 
+/* Insights coverage badges */
+.admin-cov {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.admin-cov-missing {
+  background: #fdecea;
+  color: #b00020;
+}
+
+.admin-cov-unclear {
+  background: #fff4e5;
+  color: #8a5a00;
+}
+
+.admin-cov-covered {
+  background: #e6f4ea;
+  color: #1e7e34;
+}
+
+.admin-proposed {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #eee;
+  font-size: 13px;
+}
+
 /* Knowledge upload panel */
 .admin-upload {
   background: #fff;

@@ -25,6 +25,10 @@ const uploadKnowledge = vi.fn();
 const approveKnowledge = vi.fn();
 const removeKnowledge = vi.fn();
 const replaceKnowledge = vi.fn();
+const getLatestInsights = vi.fn();
+const listInsightsReports = vi.fn();
+const getInsightsReport = vi.fn();
+const runInsights = vi.fn();
 
 vi.mock("./api", () => ({
   createAdminClient: () => ({
@@ -47,6 +51,10 @@ vi.mock("./api", () => ({
     approveKnowledge,
     removeKnowledge,
     replaceKnowledge,
+    getLatestInsights,
+    listInsightsReports,
+    getInsightsReport,
+    runInsights,
   }),
   AdminAuthError: class AdminAuthError extends Error {},
   AdminForbiddenError: class AdminForbiddenError extends Error {},
@@ -105,6 +113,30 @@ const KNOWLEDGE_SOURCE = {
   updated_at: "2026-07-01",
 };
 
+const INSIGHTS_REPORT = {
+  period_type: "daily",
+  period_key: "2026-07-08",
+  generated_at: "2026-07-09T00:05:00Z",
+  window_start: "2026-07-08T00:00:00Z",
+  window_end: "2026-07-09T00:00:00Z",
+  conversations_analyzed: 12,
+  summary: "New-model support is the biggest gap this period.",
+  clusters: [
+    {
+      label: "New model support",
+      representative_question: "do you support the new model",
+      sample_questions: ["do you support the new model", "is the new model available"],
+      size: 4,
+      dominant_topic: "services",
+      coverage: "missing",
+      conversation_ids: ["cnv_1", "cnv_2"],
+      proposed_question: "Do you support the new model?",
+      proposed_answer: "Yes, we can integrate it.",
+      proposed_canonical_intent: "insight_abc123",
+    },
+  ],
+};
+
 const PENDING_PRIVACY = {
   request_id: "prv_1",
   type: "deletion",
@@ -136,6 +168,21 @@ beforeEach(() => {
   listKnowledgeSources.mockResolvedValue({ sources: [KNOWLEDGE_SOURCE] });
   approveKnowledge.mockResolvedValue({ ...KNOWLEDGE_SOURCE, approved: true });
   removeKnowledge.mockResolvedValue({ ...KNOWLEDGE_SOURCE, lifecycle: "removed" });
+  getLatestInsights.mockResolvedValue({ report: INSIGHTS_REPORT });
+  listInsightsReports.mockResolvedValue({
+    reports: [
+      {
+        report_id: "daily:2026-07-08",
+        period_type: "daily",
+        period_key: "2026-07-08",
+        generated_at: "2026-07-09T00:05:00Z",
+        conversations_analyzed: 12,
+        cluster_count: 1,
+      },
+    ],
+  });
+  getInsightsReport.mockResolvedValue(INSIGHTS_REPORT);
+  runInsights.mockResolvedValue({ ok: true, detail: "queued" });
   verifyPrivacyRequest.mockResolvedValue({ ok: true, detail: "verified" });
   revealRequest.mockResolvedValue({
     request_id: "req_1",
@@ -275,6 +322,38 @@ describe("AdminApp", () => {
     // approveKnowledge(source_id, reason).
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     await waitFor(() => expect(approveKnowledge).toHaveBeenCalledWith("kbs_1", "audit reason"));
+  });
+
+  it("shows the insights report and lets an admin approve a proposed FAQ", async () => {
+    render(<AdminApp />);
+    signIn();
+    await screen.findByText("admin (admin)");
+
+    fireEvent.click(screen.getByRole("button", { name: "Insights" }));
+
+    // Summary + cluster + coverage badge render; Run now is available to admins.
+    expect(await screen.findByText(/New-model support is the biggest gap/)).toBeInTheDocument();
+    expect(screen.getByText("New model support")).toBeInTheDocument();
+    expect(screen.getByText("missing")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run now" })).toBeInTheDocument();
+
+    // Approve FAQ approves the auto-drafted canonical via the existing gate.
+    fireEvent.click(screen.getByRole("button", { name: "Approve FAQ" }));
+    await waitFor(() =>
+      expect(approveCanonical).toHaveBeenCalledWith("insight_abc123", "audit reason"),
+    );
+  });
+
+  it("hides Run now and Approve FAQ from a viewer on the insights tab", async () => {
+    getMe.mockResolvedValue({ username: "vera", role: "viewer" });
+    render(<AdminApp />);
+    signIn();
+    await screen.findByText("vera (viewer)");
+
+    fireEvent.click(screen.getByRole("button", { name: "Insights" }));
+    expect(await screen.findByText("New model support")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Run now" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve FAQ" })).not.toBeInTheDocument();
   });
 
   it("drops back to login when a knowledge action returns 401", async () => {
