@@ -127,6 +127,112 @@ async def test_label_conversations_stops_at_time_budget(db: Database) -> None:
     assert result == {"scanned": 1, "labeled": 1}
 
 
+async def test_generate_insights_clusters_and_auto_drafts(db: Database) -> None:
+    from app.core.config import get_settings
+    from app.domain.audit.repository import AuditRepository
+    from app.domain.canonical.repository import CanonicalAnswerRepository
+    from app.domain.conversations.models import Conversation, Message
+    from app.domain.insights.periods import current_period
+    from app.domain.insights.repository import InsightsReportRepository
+    from app.domain.insights.service import InsightsService
+    from tests.fakes import FakeAdapter
+
+    conversations = ConversationRepository(db["conversations"])
+    canonical = CanonicalAnswerRepository(db["canonical_answers"])
+    now = datetime.now(UTC)
+    question = "Do you support the new AI model?"
+    for i in range(3):  # 3 identical questions → one cluster of size 3 (>= min_cluster_size)
+        convo = Conversation(
+            id=f"cnv_{i}",
+            status="completed",
+            started_at=now,
+            last_activity_at=now,
+            messages=[Message(id="m", role="user", content=question, created_at=now)],
+        )
+        await db["conversations"].insert_one(convo.model_dump(by_alias=True))
+
+    adapter = FakeAdapter(
+        embed_by_text={question: [1.0, 0.0, 0.0]},  # identical vectors → cluster
+        classify_result=(
+            '{"label":"New model support","coverage":"missing",'
+            '"proposed_question":"Do you support the new model?",'
+            '"proposed_answer":"Yes, we can integrate it."}'
+        ),
+    )
+    service = InsightsService(
+        conversations,
+        canonical,
+        AuditRepository(db["audit"]),
+        InsightsReportRepository(db["insights_reports"]),
+        adapter,
+        get_settings(),
+    )
+    period = current_period("daily", now)
+    report = await service.generate(period, now=now)
+
+    assert report is not None
+    assert report.conversations_analyzed == 3
+    assert len(report.clusters) == 1
+    cluster = report.clusters[0]
+    assert cluster.size == 3 and cluster.coverage == "missing"
+    assert cluster.proposed is not None
+    draft_intent = cluster.proposed.canonical_draft_intent
+    assert draft_intent is not None and draft_intent.startswith("insight_")
+    # A canonical DRAFT was created (never served until a human approves) + audited.
+    draft = await canonical.get(draft_intent)
+    assert draft is not None and draft.status == "draft"
+    assert await db["audit"].count_documents({"action": "propose_faq"}) == 1
+
+    # Idempotent: re-running the same period overwrites (one report), no duplicate draft.
+    await service.generate(period, now=now)
+    assert await db["insights_reports"].count_documents({}) == 1
+    assert await db["canonical_answers"].count_documents({"intent": draft_intent}) == 1
+
+
+async def test_generate_insights_weekly_does_not_auto_draft(db: Database) -> None:
+    # Only the DAILY run creates drafts (weekly/monthly overlap daily and would duplicate).
+    from app.core.config import get_settings
+    from app.domain.audit.repository import AuditRepository
+    from app.domain.canonical.repository import CanonicalAnswerRepository
+    from app.domain.conversations.models import Conversation, Message
+    from app.domain.insights.periods import current_period
+    from app.domain.insights.repository import InsightsReportRepository
+    from app.domain.insights.service import InsightsService
+    from tests.fakes import FakeAdapter
+
+    now = datetime.now(UTC)
+    q = "How do you handle data security?"
+    for i in range(3):
+        convo = Conversation(
+            id=f"cnv_{i}",
+            status="completed",
+            started_at=now,
+            last_activity_at=now,
+            messages=[Message(id="m", role="user", content=q, created_at=now)],
+        )
+        await db["conversations"].insert_one(convo.model_dump(by_alias=True))
+    adapter = FakeAdapter(
+        embed_by_text={q: [0.0, 1.0, 0.0]},
+        classify_result=(
+            '{"label":"Data security","coverage":"missing",'
+            '"proposed_question":"?","proposed_answer":"a"}'
+        ),
+    )
+    service = InsightsService(
+        ConversationRepository(db["conversations"]),
+        CanonicalAnswerRepository(db["canonical_answers"]),
+        AuditRepository(db["audit"]),
+        InsightsReportRepository(db["insights_reports"]),
+        adapter,
+        get_settings(),
+    )
+    report = await service.generate(current_period("weekly", now), now=now)
+    assert report is not None and report.clusters[0].proposed is not None
+    # Proposal text is shown, but NO canonical draft was created on a weekly run.
+    assert report.clusters[0].proposed.canonical_draft_intent is None
+    assert await db["canonical_answers"].count_documents({}) == 0
+
+
 async def test_poll_indexing_noops_on_inactive_source(db: Database) -> None:
     # A source removed/replaced after approval is DETACHED; polling its status would
     # 404 and dead-letter uselessly. run_poll_indexing must no-op on lifecycle != active.

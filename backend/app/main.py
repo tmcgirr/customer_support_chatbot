@@ -24,6 +24,7 @@ from app.domain.audit.repository import ensure_indexes as ensure_audit_indexes
 from app.domain.canonical.repository import ensure_indexes as ensure_canonical_indexes
 from app.domain.conversations.repository import ensure_indexes as ensure_conversation_indexes
 from app.domain.feedback.repository import ensure_indexes as ensure_feedback_indexes
+from app.domain.insights.repository import ensure_indexes as ensure_insights_indexes
 from app.domain.jobs.repository import ensure_indexes as ensure_job_indexes
 from app.domain.knowledge.repository import ensure_indexes as ensure_knowledge_indexes
 from app.domain.knowledge.search import KnowledgeSearch
@@ -48,6 +49,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await ensure_job_indexes(database["jobs"])
     await ensure_audit_indexes(database["audit"])
     await ensure_privacy_indexes(database["privacy_requests"])
+    await ensure_insights_indexes(database["insights_reports"])
     app.state.mongo_client = client
     app.state.db = database
     app.state.adapter = OpenAIResponsesAdapter()

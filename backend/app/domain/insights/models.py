@@ -17,6 +17,11 @@ from pydantic import BaseModel, ConfigDict, Field
 # (covered), addressed but ambiguously (unclear), or not at all (missing).
 Coverage = Literal["covered", "unclear", "missing"]
 
+# The time horizon a report covers. Reports OVERLAP across horizons by design (a Tuesday
+# conversation is in Tuesday's daily, that week's weekly, that month's monthly) — the
+# per-conversation extraction/label is still computed once; a report is only a view.
+PeriodType = Literal["daily", "weekly", "monthly"]
+
 
 class ProposedAnswer(BaseModel):
     """A unified Q/A the engine proposes for a common, uncovered cluster. It becomes a
@@ -43,7 +48,9 @@ class InsightsReport(BaseModel):
     # populate_by_name lets us construct with id= while Mongo stores _id (the date key).
     model_config = ConfigDict(populate_by_name=True)
 
-    id: str = Field(alias="_id")  # "YYYY-MM-DD" (UTC) — one report per day, idempotent
+    id: str = Field(alias="_id")  # "<period_type>:<period_key>" — one per period, idempotent
+    period_type: PeriodType
+    period_key: str  # daily "2026-07-08" · weekly "2026-W28" · monthly "2026-07"
     generated_at: datetime
     window_start: datetime
     window_end: datetime

@@ -137,11 +137,14 @@ class Settings(BaseSettings):
     insights_similarity_threshold: float = 0.82
     # A cluster this size is "common" enough to surface + propose a unified FAQ for.
     insights_min_cluster_size: int = 3
-    insights_window_days: int = 7  # look-back window a report covers
     insights_batch_limit: int = 300  # max conversations analyzed per run
     # Wall-clock cap for the run's LLM steps (naming/coverage/proposal per cluster +
     # summary) — kept under worker_job_timeout_seconds so the job can't time out.
     insights_time_budget_seconds: float = 40.0
+    # Which report horizons the scheduled run maintains (all share one code path).
+    insights_enable_daily: bool = True
+    insights_enable_weekly: bool = True
+    insights_enable_monthly: bool = True
 
     # --- Request delivery transport (pluggable; V1.5). 'simulated' (default) is a
     # functional MOCK: it records what WOULD be sent (visible in admin), needs no creds,

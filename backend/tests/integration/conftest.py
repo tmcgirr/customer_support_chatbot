@@ -12,6 +12,7 @@ from app.api.deps import (
     get_canonical_repository,
     get_conversation_repository,
     get_feedback_repository,
+    get_insights_repository,
     get_job_repository,
     get_knowledge_repository,
     get_knowledge_search,
@@ -28,6 +29,8 @@ from app.domain.canonical.repository import ensure_indexes as ensure_canonical
 from app.domain.conversations.repository import ConversationRepository, ensure_indexes
 from app.domain.feedback.repository import FeedbackRepository
 from app.domain.feedback.repository import ensure_indexes as ensure_feedback
+from app.domain.insights.repository import InsightsReportRepository
+from app.domain.insights.repository import ensure_indexes as ensure_insights
 from app.domain.jobs.repository import JobRepository
 from app.domain.jobs.repository import ensure_indexes as ensure_jobs
 from app.domain.knowledge.repository import KnowledgeSourceRepository
@@ -124,6 +127,13 @@ async def knowledge_collection() -> AsyncIterator[Collection]:
 
 
 @pytest.fixture
+async def insights_collection() -> AsyncIterator[Collection]:
+    async for coll in _fresh_collection("insights_reports"):
+        await ensure_insights(coll)
+        yield coll
+
+
+@pytest.fixture
 def fake_adapter() -> FakeAdapter:
     return FakeAdapter.replying(DEFAULT_REPLY)
 
@@ -144,6 +154,7 @@ async def client(
     audit_collection: Collection,
     privacy_collection: Collection,
     knowledge_collection: Collection,
+    insights_collection: Collection,
     fake_adapter: FakeAdapter,
     fake_knowledge: FakeKnowledgeSearch,
 ) -> AsyncIterator[httpx.AsyncClient]:
@@ -156,7 +167,9 @@ async def client(
     audit_repo = AuditRepository(audit_collection)
     privacy_repo = PrivacyRequestRepository(privacy_collection)
     knowledge_repo = KnowledgeSourceRepository(knowledge_collection)
+    insights_repo = InsightsReportRepository(insights_collection)
     app.dependency_overrides[get_knowledge_repository] = lambda: knowledge_repo
+    app.dependency_overrides[get_insights_repository] = lambda: insights_repo
     # A simulated store so knowledge upload/approve/remove never calls a real OpenAI store.
     app.dependency_overrides[get_knowledge_store] = lambda: SimulatedKnowledgeStore()
     app.dependency_overrides[get_conversation_repository] = lambda: conversation_repo

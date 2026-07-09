@@ -9,6 +9,7 @@ import time
 from datetime import UTC, datetime, timedelta
 
 from app.agent.adapter import ModelAdapter
+from app.core.config import Settings
 from app.domain.aggregates.repository import AggregatesRepository
 from app.domain.analytics.labeler import ConversationLabeler
 from app.domain.audit.repository import AuditRepository
@@ -18,6 +19,8 @@ from app.domain.conversations.repository import (
     ConversationRepository,
 )
 from app.domain.feedback.repository import FeedbackRepository
+from app.domain.insights.repository import InsightsReportRepository
+from app.domain.insights.service import InsightsService
 from app.domain.jobs.repository import JobRepository
 from app.domain.knowledge.repository import KnowledgeSourceRepository
 from app.domain.knowledge.store import KnowledgeStore, KnowledgeStoreError
@@ -111,6 +114,28 @@ async def run_label_conversations(
         if time.monotonic() >= deadline:
             break  # stop before the worker's hard job timeout; the rest go next run
     return {"scanned": scanned, "labeled": labeled}
+
+
+async def run_generate_insights(
+    conversations: ConversationRepository,
+    canonical: CanonicalAnswerRepository,
+    audit: AuditRepository,
+    reports: InsightsReportRepository,
+    adapter: ModelAdapter,
+    settings: Settings,
+    *,
+    mode: str = "scheduled",
+) -> dict[str, list[str]]:
+    """Build insights reports. ``scheduled`` ensures each enabled horizon's last COMPLETE
+    period exists (fires just after a period boundary; idempotent no-op once present);
+    ``manual`` regenerates the CURRENT in-progress period for each horizon."""
+    service = InsightsService(conversations, canonical, audit, reports, adapter, settings)
+    now = _now()
+    if mode == "manual":
+        generated = await service.refresh_current(now)
+    else:
+        generated = await service.ensure_latest(now)
+    return {"generated": generated}
 
 
 async def run_retention_sweep(

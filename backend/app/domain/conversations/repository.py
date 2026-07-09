@@ -367,6 +367,25 @@ class ConversationRepository:
             {"_id": conversation_id}, {"$set": {"labels": labels.model_dump()}}
         )
 
+    async def list_ended_in_window(
+        self, start: datetime, end: datetime, *, limit: int
+    ) -> list[Conversation]:
+        """Ended conversations whose last activity falls in [start, end) — the membership
+        of an insights report for that period. Anchored on last_activity_at (fixed once a
+        conversation ends), so a past period's set is stable across re-runs."""
+        docs = (
+            await self._collection.find(
+                {
+                    "status": {"$in": list(self._ENDED_STATUSES)},
+                    "last_activity_at": {"$gte": start, "$lt": end},
+                }
+            )
+            .sort("last_activity_at", ASCENDING)
+            .limit(limit)
+            .to_list(length=limit)
+        )
+        return [Conversation.model_validate(doc) for doc in docs]
+
     # --- Read-only admin queries ---
 
     async def total(self) -> int:

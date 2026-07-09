@@ -21,6 +21,8 @@ AuditAction = Literal[
     "replace_knowledge",
     "remove_knowledge",
     "approve_knowledge",
+    "run_insights",  # V1.5 insights: admin manually triggered a report run
+    "propose_faq",  # V1.5 insights: the engine drafted a proposed canonical answer
     "export",
     "delete",  # V6: subject erasure executed (also used for content deletion)
 ]

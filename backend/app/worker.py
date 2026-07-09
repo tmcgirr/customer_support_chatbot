@@ -30,12 +30,14 @@ from app.domain.delivery.adapters import build_delivery_client
 from app.domain.delivery.client import DeliveryClient
 from app.domain.delivery.service import DeliveryService
 from app.domain.feedback.repository import FeedbackRepository
+from app.domain.insights.repository import InsightsReportRepository
 from app.domain.jobs.models import Job, JobType
 from app.domain.jobs.repository import JobRepository
 from app.domain.jobs.repository import ensure_indexes as ensure_job_indexes
 from app.domain.jobs.tasks import (
     run_abandonment_sweep,
     run_daily_aggregates,
+    run_generate_insights,
     run_knowledge_review_reminder,
     run_label_conversations,
     run_poll_indexing,
@@ -63,6 +65,9 @@ _SCHEDULE: dict[JobType, int] = {
     "delivery_reconcile": 300,
     "daily_aggregates": 86_400,
     "label_conversations": 3600,  # hourly: keep the analytics dashboard reasonably fresh
+    # Hourly check that each enabled horizon's last-complete report exists — fires once per
+    # period near its boundary (daily just after UTC midnight), idempotent no-op otherwise.
+    "generate_insights": 3600,
     "knowledge_review_reminder": 86_400,
     "retention_sweep": 86_400,
     "privacy_reconcile": 300,
@@ -86,6 +91,7 @@ class Worker:
         self._requests = RequestRepository(db["requests"])
         self._feedback = FeedbackRepository(db["feedback"])
         self._canonical = CanonicalAnswerRepository(db["canonical_answers"])
+        self._insights = InsightsReportRepository(db["insights_reports"])
         self._knowledge = KnowledgeSourceRepository(db["knowledge_sources"])
         self._knowledge_store = knowledge_store or build_knowledge_store(settings)
         # Offline model access for analytics labeling (classify only). Tests inject a fake.
@@ -285,6 +291,20 @@ class Worker:
                 self._conversations, self._requests, self._canonical, self._adapter
             )
             logger.info("worker.conversations_labeled", extra={"context": {"counts": counts}})
+        elif job_type == "generate_insights":
+            # resource_id="refresh" (from the admin Run-now button) regenerates the current
+            # in-progress periods; the scheduled job (no resource_id) ensures last-complete.
+            mode = "manual" if job.resource_id == "refresh" else "scheduled"
+            insights_result = await run_generate_insights(
+                self._conversations,
+                self._canonical,
+                self._audit,
+                self._insights,
+                self._adapter,
+                self._settings,
+                mode=mode,
+            )
+            logger.info("worker.insights_generated", extra={"context": {"result": insights_result}})
         elif job_type == "retention_sweep":
             counts = await run_retention_sweep(
                 self._conversations,

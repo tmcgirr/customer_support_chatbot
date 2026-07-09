@@ -15,6 +15,7 @@ from app.api.admin.auth import AdminDep, AdminRoleDep
 from app.api.deps import (
     AuditRepoDep,
     CanonicalRepoDep,
+    InsightsRepoDep,
     JobRepoDep,
     KnowledgeRepoDep,
     KnowledgeStoreDep,
@@ -27,6 +28,7 @@ from app.core.config import get_settings
 from app.core.errors import AppError, ErrorCode
 from app.core.logging import get_logger
 from app.core.masking import mask_email, mask_pii_in_text
+from app.domain.insights.models import InsightsReport
 from app.domain.knowledge.models import KnowledgeSource
 from app.domain.knowledge.store import KnowledgeStore, KnowledgeStoreError
 from app.domain.monitoring.alerts import evaluate_alerts
@@ -164,6 +166,49 @@ class CanonicalSummary(BaseModel):
 
 class CanonicalListResponse(BaseModel):
     answers: list[CanonicalSummary]
+
+
+class InsightsCluster(BaseModel):
+    label: str
+    representative_question: str
+    sample_questions: list[str]
+    size: int
+    dominant_topic: str | None
+    coverage: str
+    conversation_ids: list[str]
+    proposed_question: str | None
+    proposed_answer: str | None
+    # The canonical DRAFT intent to approve (if the engine auto-drafted one); the admin
+    # approves it through the existing canonical gate. Never a provider id (invariant #6).
+    proposed_canonical_intent: str | None
+
+
+class InsightsReportResponse(BaseModel):
+    period_type: str
+    period_key: str
+    generated_at: datetime
+    window_start: datetime
+    window_end: datetime
+    conversations_analyzed: int
+    clusters: list[InsightsCluster]
+    summary: str
+
+
+class InsightsLatestResponse(BaseModel):
+    report: InsightsReportResponse | None
+
+
+class InsightsReportItem(BaseModel):
+    report_id: str
+    period_type: str
+    period_key: str
+    generated_at: datetime
+    conversations_analyzed: int
+    cluster_count: int
+
+
+class InsightsListResponse(BaseModel):
+    reports: list[InsightsReportItem]
 
 
 class PrivacySummary(BaseModel):
@@ -809,6 +854,90 @@ async def replace_knowledge(
             )
     await knowledge.set_lifecycle(source_id, "replaced")
     return _knowledge_summary(new)
+
+
+def _to_report_response(report: InsightsReport) -> InsightsReportResponse:
+    return InsightsReportResponse(
+        period_type=report.period_type,
+        period_key=report.period_key,
+        generated_at=report.generated_at,
+        window_start=report.window_start,
+        window_end=report.window_end,
+        conversations_analyzed=report.conversations_analyzed,
+        summary=report.summary,
+        clusters=[
+            InsightsCluster(
+                label=c.label,
+                representative_question=c.representative_question,
+                sample_questions=c.sample_questions,
+                size=c.size,
+                dominant_topic=c.dominant_topic,
+                coverage=c.coverage,
+                conversation_ids=c.conversation_ids,
+                proposed_question=c.proposed.question if c.proposed else None,
+                proposed_answer=c.proposed.answer if c.proposed else None,
+                proposed_canonical_intent=(
+                    c.proposed.canonical_draft_intent if c.proposed else None
+                ),
+            )
+            for c in report.clusters
+        ],
+    )
+
+
+@router.get("/insights", response_model=InsightsLatestResponse)
+async def latest_insights(_admin: AdminDep, insights: InsightsRepoDep) -> InsightsLatestResponse:
+    """The most recent insights report (any horizon), for the admin Insights view."""
+    report = await insights.latest()
+    return InsightsLatestResponse(
+        report=_to_report_response(report) if report is not None else None
+    )
+
+
+@router.get("/insights/reports", response_model=InsightsListResponse)
+async def list_insights(_admin: AdminDep, insights: InsightsRepoDep) -> InsightsListResponse:
+    """Recent reports (newest first) so the UI can offer a day/week/month picker."""
+    return InsightsListResponse(
+        reports=[
+            InsightsReportItem(
+                report_id=r.id,
+                period_type=r.period_type,
+                period_key=r.period_key,
+                generated_at=r.generated_at,
+                conversations_analyzed=r.conversations_analyzed,
+                cluster_count=len(r.clusters),
+            )
+            for r in await insights.list_recent()
+        ]
+    )
+
+
+@router.get("/insights/reports/{report_id}", response_model=InsightsReportResponse)
+async def get_insights_report(
+    report_id: str, _admin: AdminDep, insights: InsightsRepoDep
+) -> InsightsReportResponse:
+    report = await insights.get(report_id)
+    if report is None:
+        raise AppError(ErrorCode.CONVERSATION_NOT_FOUND, "Insights report not found.")
+    return _to_report_response(report)
+
+
+@router.post("/insights/run", response_model=ActionResponse)
+async def run_insights_now(
+    admin: AdminRoleDep, jobs: JobRepoDep, audit: AuditRepoDep
+) -> ActionResponse:
+    """Queue an on-demand insights run (regenerates the current in-progress periods).
+    Admin-only + audited; the worker does the work asynchronously (spends model $)."""
+    await jobs.enqueue("generate_insights", resource_id="refresh")
+    await audit.record(
+        actor=admin.username,
+        role=admin.role,
+        action="run_insights",
+        target_type="insights",
+        target_id="refresh",
+        reason="manual insights run",
+    )
+    return ActionResponse(ok=True, detail="Insights run queued.")
 
 
 @router.get("/privacy-requests", response_model=PrivacyListResponse)

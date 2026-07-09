@@ -210,6 +210,24 @@ async def test_worker_dispatches_label_conversations(db: Database) -> None:
     assert labeled.labels.topic == "company"
 
 
+async def test_worker_dispatches_generate_insights(db: Database) -> None:
+    # The generate_insights job routes through dispatch; with no conversations it still
+    # writes the last-complete daily/weekly/monthly reports (empty) and completes.
+    from tests.fakes import FakeAdapter
+
+    jobs = JobRepository(db["jobs"])
+    job = await jobs.enqueue("generate_insights")
+    worker = Worker(db, settings=get_settings(), adapter=FakeAdapter())
+    claimed = await jobs.claim(worker._owner, lease_seconds=60)  # noqa: SLF001
+    assert claimed is not None
+    await worker._run_job(claimed)  # noqa: SLF001
+
+    doc = await db["jobs"].find_one({"_id": job.id})
+    assert doc is not None and doc["status"] == "done"
+    # ensure_latest wrote reports for the enabled horizons (empty is fine).
+    assert await db["insights_reports"].count_documents({}) >= 1
+
+
 async def test_worker_deadletter_marks_indexing_failed(db: Database) -> None:
     # A poll_indexing job that exhausts its budget (store keeps erroring) must dead-letter
     # AND reconcile the source's status to 'failed' — not leave it stuck at 'pending'

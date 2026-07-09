@@ -21,6 +21,7 @@ JobType = Literal[
     "privacy_reconcile",  # V6: periodic — re-enqueue verified erasures whose job was lost
     "daily_aggregates",  # periodic: snapshot conversation/request/feedback counts
     "label_conversations",  # V1.5 periodic: topic/intent-label ended conversations
+    "generate_insights",  # V1.5 periodic + on-demand: build daily/weekly/monthly reports
     "knowledge_review_reminder",  # periodic: flag knowledge sources past review_date
     "stale_lock_sweep",  # periodic: release leaked conversation run-locks
     "abandonment_sweep",  # periodic: mark inactive conversations abandoned

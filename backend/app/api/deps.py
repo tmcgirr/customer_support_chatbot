@@ -14,6 +14,7 @@ from app.domain.audit.repository import AuditRepository
 from app.domain.canonical.repository import CanonicalAnswerRepository
 from app.domain.conversations.repository import ConversationRepository
 from app.domain.feedback.repository import FeedbackRepository
+from app.domain.insights.repository import InsightsReportRepository
 from app.domain.jobs.repository import JobRepository
 from app.domain.knowledge.repository import KnowledgeSourceRepository
 from app.domain.knowledge.search import KnowledgeSearch
@@ -67,6 +68,10 @@ def get_feedback_repository(request: Request) -> FeedbackRepository:
     return FeedbackRepository(request.app.state.db["feedback"])
 
 
+def get_insights_repository(request: Request) -> InsightsReportRepository:
+    return InsightsReportRepository(request.app.state.db["insights_reports"])
+
+
 def get_adapter(request: Request) -> ModelAdapter:
     return cast(ModelAdapter, request.app.state.adapter)
 
@@ -85,6 +90,7 @@ KnowledgeStoreDep = Annotated[KnowledgeStore, Depends(get_knowledge_store)]
 CanonicalRepoDep = Annotated[CanonicalAnswerRepository, Depends(get_canonical_repository)]
 RequestRepoDep = Annotated[RequestRepository, Depends(get_request_repository)]
 FeedbackRepoDep = Annotated[FeedbackRepository, Depends(get_feedback_repository)]
+InsightsRepoDep = Annotated[InsightsReportRepository, Depends(get_insights_repository)]
 AdapterDep = Annotated[ModelAdapter, Depends(get_adapter)]
 KnowledgeSearchDep = Annotated[KnowledgeSearch, Depends(get_knowledge_search)]
 

@@ -17,6 +17,8 @@ _COLLECTIONS = (
     "aggregates",
     "privacy_requests",
     "audit",
+    "canonical_answers",
+    "insights_reports",
 )
 
 Database = AsyncIOMotorDatabase[dict[str, Any]]
