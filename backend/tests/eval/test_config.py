@@ -32,6 +32,15 @@ def test_load_configs_rejects_non_list(tmp_path: Path) -> None:
         load_configs(path)
 
 
+def test_load_configs_rejects_duplicate_names(tmp_path: Path) -> None:
+    path = tmp_path / "dupes.yaml"
+    path.write_text(
+        "- name: gpt\n  model: gpt-4o\n- name: gpt\n  model: gpt-4o-mini\n", encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="names must be unique"):
+        load_configs(path)
+
+
 def test_current_config_from_settings() -> None:
     cfg = current_config()
     assert cfg.name == "current" and cfg.model and cfg.prompt_version

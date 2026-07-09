@@ -189,6 +189,18 @@ async def run_config(
     return RunResult(config=config, generated_at=datetime.now(UTC), cases=results)
 
 
+def _write_output(path_str: str, content: str) -> str:
+    """Write an output artifact, creating parent dirs. Returns a status line; an I/O error
+    is reported (not raised) so it can never flip the gate's exit code."""
+    try:
+        path = Path(path_str)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        return f"wrote {path_str}"
+    except OSError as exc:
+        return f"WARNING: could not write {path_str}: {exc}"
+
+
 def _load_cases(id_filter: str) -> list[dict[str, Any]]:
     cases: list[dict[str, Any]] = yaml.safe_load(GOLDEN_SET.read_text(encoding="utf-8"))
     return [c for c in cases if id_filter in c.get("id", "")] if id_filter else cases
@@ -253,13 +265,13 @@ async def main(
 
     client.close()
 
+    # Writing an output artifact must NEVER change the gate's exit code — the gate reflects
+    # the eval result, not I/O. A bad path warns (and makes the parent dir) but doesn't crash.
     if json_out:
         payload = json.dumps({"runs": [r.as_dict() for r in runs]}, indent=2)
-        await asyncio.to_thread(Path(json_out).write_text, payload, encoding="utf-8")
-        print(f"wrote {json_out}")
+        print(await asyncio.to_thread(_write_output, json_out, payload))
     if report:
-        await asyncio.to_thread(Path(report).write_text, render_html(runs), encoding="utf-8")
-        print(f"wrote {report}")
+        print(await asyncio.to_thread(_write_output, report, render_html(runs)))
 
     if gated and any(not c.passed for r in runs for c in r.cases):
         return 1

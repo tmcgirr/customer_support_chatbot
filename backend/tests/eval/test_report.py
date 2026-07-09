@@ -49,6 +49,16 @@ def test_multi_run_report_ranks_and_diffs() -> None:
     assert html.index("good") < html.index("bad")
 
 
+def test_diff_matrix_does_not_collapse_same_named_configs() -> None:
+    # Two runs sharing a name must NOT collapse — each column keeps its own pass/fail and a
+    # real disagreement is still highlighted (matrix is keyed by position, not name).
+    a = _run("dup", [CaseResult(id="prc_001", passed=True), CaseResult(id="sec_001", passed=False)])
+    b = _run("dup", [CaseResult(id="prc_001", passed=False), CaseResult(id="sec_001", passed=True)])
+    html = render_html([a, b])
+    assert "differ" in html  # the disagreement is not erased
+    assert "✓" in html and "✗" in html  # both marks render (not two identical ones)
+
+
 def test_model_output_is_escaped() -> None:
     run = _run("x", [CaseResult(id="c1", passed=True, text="<script>alert(1)</script>")])
     html = render_html([run])

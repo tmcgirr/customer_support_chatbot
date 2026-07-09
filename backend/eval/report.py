@@ -44,14 +44,16 @@ def _ranking_table(runs: list[RunResult]) -> str:
 
 def _diff_matrix(runs: list[RunResult]) -> str:
     case_ids = sorted({c.id for r in runs for c in r.cases})
-    passed_by = {r.config.name: {c.id: c.passed for c in r.cases} for r in runs}
+    # Key by POSITION, not config.name — two configs sharing a name must not collapse
+    # into one column (which would erase a real A-B disagreement).
+    passed_by = [{c.id: c.passed for c in r.cases} for r in runs]
     head = "".join(f"<th>{_esc(r.config.name)}</th>" for r in runs)
     rows = []
     for cid in case_ids:
         cells = []
         seen = []
-        for r in runs:
-            p = passed_by[r.config.name].get(cid)
+        for i in range(len(runs)):
+            p = passed_by[i].get(cid)
             seen.append(p)
             if p is None:
                 cells.append("<td class='skip'>–</td>")

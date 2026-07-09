@@ -59,4 +59,8 @@ def load_configs(path: Path) -> list[EvalConfig]:
                 prompt_version=str(entry.get("prompt_version", CURRENT_PROMPT_VERSION)),
             )
         )
+    names = [c.name for c in configs]
+    dupes = sorted({n for n in names if names.count(n) > 1})
+    if dupes:
+        raise ValueError(f"config names must be unique — duplicated: {', '.join(dupes)}")
     return configs
