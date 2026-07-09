@@ -93,11 +93,13 @@ ToolRegistryDep = Annotated[ToolRegistry, Depends(get_tool_registry)]
 def get_orchestrator(
     repo: RepoDep, adapter: AdapterDep, registry: ToolRegistryDep
 ) -> ChatOrchestrator:
+    settings = get_settings()
     return ChatOrchestrator(
         repo,
         adapter,
         tool_registry=registry,
-        lock_stale_seconds=get_settings().lock_stale_seconds,
+        lock_stale_seconds=settings.lock_stale_seconds,
+        include_citations=settings.enable_citations,
     )
 
 

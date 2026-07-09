@@ -400,3 +400,43 @@ Choices made during implementation that the planning docs did not fully specify
 - **Verified:** existence-non-leak, per-IP rate limit, role-gated + audited verify, subject
   isolation, idempotent replay, no PII in worker logs/audit (counts only) — by tests + review.
   249 backend tests + 7 admin frontend tests.
+
+## Phase V7 — Experience & accessibility
+
+- **2026-07-08 · Widget session persisted in sessionStorage for reload-resume.** The
+  conversation id + session token are mirrored to sessionStorage so a page reload RESUMES the
+  same conversation from the transcript endpoint (GET /conversations/{id}/messages) instead of
+  starting over. Rationale vs invariant #9 (admin creds in memory only): the widget token is a
+  short-lived, conversation-scoped HMAC — not a credential — and sessionStorage is per-tab and
+  cleared on tab close; XSS could read the in-memory token anyway, so persistence adds no real
+  surface. On true expiry (401) the stored session is cleared and the user recovers via "start
+  new chat".
+- **2026-07-08 · Dropped-stream reconcile is authoritative but count-guarded.** On an SSE close
+  with no terminal event (or a mid-stream network drop) the widget fetches the transcript: a turn
+  is treated as completed ONLY if the count of completed-assistant messages EXCEEDS the count
+  captured before the turn — never merely "the last message is a completed assistant" (which could
+  be the prior turn). If no new answer landed, the optimistic user bubble is preserved and retry
+  offered (idempotent replay by client_message_id) — the question is never silently lost.
+- **2026-07-08 · Citations are backend-flag-gated end to end.** Approved sources (title + public
+  display URL only — no provider ids, invariant #6) are added to the completed SSE event and the
+  transcript ONLY when `enable_citations` is on; the widget renders whatever sources it receives,
+  so the single backend flag is the source of truth. Ships OFF (public citation behavior is a
+  Product/Marketing decision, doc 06 §6). No golden impact (no prompt/canonical/text change).
+- **Accessibility.** Two independent polite live regions: a visually-hidden role="status" for
+  PROCESS (responding…/complete/failed/reconnecting, driven by a status-transition effect so a
+  screen reader hears both start AND completion), and the message container as role="log"
+  aria-relevant="additions" for CONTENT (new bubbles announced; streamed tokens don't spam).
+  Focus moves to the composer on open and back to the launcher on close, with a Tab focus-trap;
+  reduced-motion neutralizes animations; contrast audited (all WCAG AA, no changes). role="dialog"
+  with aria-label; aria-modal dropped (the widget is non-blocking). axe: 0 violations.
+- **Adversarial-review fixes (2 HIGH, 2 MED, 2 LOW — 0 false positives).** canSend now requires a
+  live session so a create/resume failure disables the composer instead of silently swallowing a
+  typed message; a create failure surfaces a create-capable "Try again" action (not a no-op
+  Retry); handleExpired nulls the dead session refs and strips the in-flight streaming placeholder;
+  reconcile uses the count-signal above and preserves the optimistic bubble; an empty resumed
+  transcript starts fresh rather than showing a blank pane.
+- **Blocked-on (build against placeholder):** production website integration + real privacy/portal
+  URLs (Legal / Client Success) — wired via VITE_PRIVACY_URL / VITE_PORTAL_URL config with
+  placeholders; public citation behavior (Product/Marketing) — shipped with the flag OFF.
+- **Verified:** 42 frontend tests (resume-on-mount, expiry recovery, drop-reconcile success +
+  misclassification guard, create-failure recovery, a11y axe) + 249 backend.

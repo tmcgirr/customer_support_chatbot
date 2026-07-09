@@ -19,12 +19,18 @@ class SendMessageRequest(BaseModel):
     client_message_id: str
 
 
+class Citation(BaseModel):
+    title: str
+    url: str
+
+
 class PublicMessage(BaseModel):
     id: str
     role: str
     content: str
     status: str
     suggested_action_ids: list[str]
+    sources: list[Citation] = []
     created_at: datetime
 
 
@@ -71,6 +77,7 @@ async def get_transcript(
     conversation = await repo.get_transcript(conversation_id)
     if conversation is None:
         raise AppError(ErrorCode.CONVERSATION_NOT_FOUND)
+    include_citations = get_settings().enable_citations
     return TranscriptResponse(
         conversation_id=conversation.id,
         messages=[
@@ -80,6 +87,11 @@ async def get_transcript(
                 content=m.content,
                 status=m.status,
                 suggested_action_ids=m.suggested_action_ids,
+                sources=(
+                    [Citation(title=s.title, url=s.display_url) for s in m.sources]
+                    if include_citations
+                    else []
+                ),
                 created_at=m.created_at,
             )
             for m in conversation.messages

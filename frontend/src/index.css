@@ -46,6 +46,20 @@ body {
   background: transparent;
 }
 
+/* Visually-hidden utility: content stays in the accessibility tree (read by screen
+   readers, e.g. per-message speaker labels and live-region status) but is not shown. */
+.cadre-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* ---------------------------------------------------------------- shell root */
 
 .cadre-widget {
@@ -188,6 +202,29 @@ body {
   box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.6);
 }
 
+/* -------------------------------------------------------- streaming indicator */
+
+/* Animated "typing" dots shown while an assistant turn streams. Decorative only
+   (aria-hidden in markup); the screen-reader "responding/complete" cues come from
+   the polite status live region in ConversationView. */
+.cadre-typing {
+  display: inline-block;
+  margin-left: 4px;
+  letter-spacing: 2px;
+  color: var(--cadre-text-muted);
+  animation: cadre-typing-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes cadre-typing-pulse {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
 /* --------------------------------------------------------------- privacy line */
 
 .cadre-privacy {
@@ -222,8 +259,24 @@ body {
   }
 }
 
+/* Respect a user's reduced-motion preference: neutralise every transition and
+   animation (launcher hover/press, the typing-dots pulse, any future motion) so
+   nothing pulses, slides, or scales. Values are near-zero rather than `none` so
+   animation/transition end events still fire for any dependent logic. */
 @media (prefers-reduced-motion: reduce) {
-  .cadre-launcher {
-    transition: none;
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-delay: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    transition-delay: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .cadre-typing {
+    animation: none !important;
+    opacity: 0.7;
   }
 }

@@ -13,7 +13,40 @@ export const ERROR_COPY = {
   cap: "You've reached the current chat limit. You can still contact Cadre through the options below.",
   tooLong:
     "That message is longer than the chat currently supports. Please shorten it or use the contact form.",
+  // V7 degraded states.
+  sessionExpired:
+    "This chat session has expired for your security. You can start a new conversation below.",
+  reconnectFailed:
+    "I couldn't reconnect to your previous conversation. You can retry, or start a new chat.",
+  startFailed: "I couldn't start the chat. Please try again.",
 } as const;
+
+// Transient status announced while resuming or reconnecting (not an error).
+export const RECONNECTING_STATUS = "Reconnecting to your conversation…";
+
+// Live-region announcements for screen readers during streaming (V7 a11y).
+export const STREAM_STATUS = {
+  thinking: "Assistant is responding…",
+  done: "Response complete.",
+  failed: "The response failed. You can try again.",
+} as const;
+
+// Mirror of the backend suggested-action allowlist (app/agent/actions.py) so a
+// resumed transcript (which carries action IDs only) can re-render chip labels.
+export const ACTION_LABELS: Record<string, string> = {
+  company_overview: "What does Cadre AI do?",
+  industry_fit: "Do you work with my industry?",
+  service_discovery: "Which service is right for us?",
+  ai_maturity_index: "What is the AI Maturity Index?",
+  strategy_call: "Book a strategy call",
+  portal_access: "Access the client portal",
+  portal_support: "Get portal support",
+  human_escalation: "Talk to a person",
+};
+
+export function actionLabel(id: string): string {
+  return ACTION_LABELS[id] ?? id.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 // Supporting disclosure shown on the welcome / empty state (docs/05 §opening disclosure).
 export const WELCOME_DISCLOSURE =

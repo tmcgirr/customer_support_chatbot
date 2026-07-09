@@ -2,15 +2,17 @@
 // Shift+Enter inserts a newline. Trimmed-empty input never sends.
 
 import { useState } from "react";
-import type { FormEvent, KeyboardEvent } from "react";
+import type { FormEvent, KeyboardEvent, RefObject } from "react";
 
 interface ComposerProps {
   onSend: (content: string) => void;
   disabled?: boolean;
   placeholder?: string;
+  /** Optional ref to the textarea so the shell can move focus here on panel open. */
+  inputRef?: RefObject<HTMLTextAreaElement>;
 }
 
-export function Composer({ onSend, disabled, placeholder }: ComposerProps) {
+export function Composer({ onSend, disabled, placeholder, inputRef }: ComposerProps) {
   const [value, setValue] = useState("");
 
   const submit = () => {
@@ -35,6 +37,7 @@ export function Composer({ onSend, disabled, placeholder }: ComposerProps) {
   return (
     <form className="cadre-composer" onSubmit={handleSubmit}>
       <textarea
+        ref={inputRef}
         id="cadre-composer-input"
         className="cadre-composer-input"
         aria-label="Message"

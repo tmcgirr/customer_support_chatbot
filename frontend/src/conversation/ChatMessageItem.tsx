@@ -22,9 +22,13 @@ export function ChatMessageItem({ message, onSelectAction, onRate }: ChatMessage
     <div
       className={`cadre-message cadre-message-${message.role}`}
       data-status={message.status}
-      aria-label={isAssistant ? "Assistant" : "You"}
     >
       <div className="cadre-message-body">
+        {/* Speaker label as real (visually-hidden) text so it is spoken with the
+            message when the log region announces the new bubble. aria-label on this
+            generic <div> would be ignored by the log announcement and is prohibited
+            on a role-less element, so a sr-only span is used instead. */}
+        <span className="cadre-sr-only">{isAssistant ? "Assistant said: " : "You said: "}</span>
         <span className="cadre-message-text">{message.content}</span>
         {isStreaming && (
           <span className="cadre-typing" aria-hidden="true">
@@ -34,6 +38,22 @@ export function ChatMessageItem({ message, onSelectAction, onRate }: ChatMessage
       </div>
 
       {isIncomplete && <p className="cadre-message-incomplete">Response incomplete.</p>}
+
+      {isAssistant && message.status === "completed" && message.sources
+        && message.sources.length > 0 && (
+        <nav className="cadre-citations" aria-label="Sources">
+          <p className="cadre-citations-label">Sources</p>
+          <ul>
+            {message.sources.map((source, i) => (
+              <li key={`${source.url}-${i}`}>
+                <a href={source.url} target="_blank" rel="noopener noreferrer">
+                  {source.title}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      )}
 
       {isAssistant && message.status === "completed" && (
         <>

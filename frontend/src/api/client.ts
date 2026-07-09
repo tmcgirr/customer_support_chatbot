@@ -10,6 +10,7 @@ import type {
   StreamEventName,
   SubmitRequestPayload,
   SubmitRequestResponse,
+  TranscriptResponse,
 } from "../types";
 
 export class ApiError extends Error {
@@ -47,6 +48,24 @@ export async function createConversation(entryPage?: string): Promise<CreateConv
       entry_page: entryPage ?? (typeof window !== "undefined" ? window.location.pathname : "/"),
       consent_version: undefined,
     }),
+  });
+  if (!response.ok) throw await toApiError(response);
+  return response.json();
+}
+
+/**
+ * Fetch the stored transcript to resume a conversation after a reload or a dropped
+ * stream. Throws ApiError (401 UNAUTHORIZED_SESSION on an expired token, 404 if the
+ * conversation is gone) so the caller can decide to re-create.
+ */
+export async function getTranscript(
+  conversationId: string,
+  token: string,
+  signal?: AbortSignal,
+): Promise<TranscriptResponse> {
+  const response = await fetch(`${API_BASE}/api/v1/conversations/${conversationId}/messages`, {
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+    signal,
   });
   if (!response.ok) throw await toApiError(response);
   return response.json();

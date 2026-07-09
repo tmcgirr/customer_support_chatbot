@@ -63,15 +63,26 @@ class ChatOrchestrator:
         tool_registry: ToolRegistry | None = None,
         prompt_version: str = CURRENT_PROMPT_VERSION,
         lock_stale_seconds: int = 120,
+        include_citations: bool = False,
     ) -> None:
         self._repo = repo
         self._adapter = adapter
         self._tool_registry = tool_registry
         self._prompt_version = prompt_version
         self._lock_stale_seconds = lock_stale_seconds
+        # V7: whether grounded answers stream their approved sources for display.
+        # Dark-launched OFF (public citation behavior is a Product/Marketing decision).
+        self._include_citations = include_citations
         # Refresh the lock well within the stale window so a live turn — however
         # slow — always keeps a young lock and is never swept as leaked.
         self._heartbeat_seconds = max(5, lock_stale_seconds // 3)
+
+    def _citation_payload(self, sources: list[Source]) -> list[dict[str, str]]:
+        """Serialize approved sources for the completed event — title + public display
+        URL only (no provider/file ids; contracts §6). Empty unless citations are on."""
+        if not self._include_citations:
+            return []
+        return [{"title": s.title, "url": s.display_url} for s in sources]
 
     async def start_turn(self, conversation_id: str, content: str, cmid: str) -> BeginTurnResult:
         result = await self._repo.begin_turn(conversation_id, content, cmid)
@@ -263,6 +274,7 @@ class ChatOrchestrator:
                     {
                         "assistant_message_id": assistant.id,
                         "suggested_actions": resolve_actions(suggested_action_ids),
+                        "sources": self._citation_payload(sources),
                     },
                 )
         except AdapterError as exc:
@@ -353,6 +365,7 @@ class ChatOrchestrator:
                 {
                     "assistant_message_id": assistant.id,
                     "suggested_actions": resolve_actions(assistant.suggested_action_ids),
+                    "sources": self._citation_payload(assistant.sources),
                 },
             )
 

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { ConversationView, useConversation } from "./conversation";
 import RequestForm from "./forms/RequestForm";
@@ -18,6 +18,8 @@ export default function App() {
   const [formType, setFormType] = useState<RequestType | null>(null);
   const [originalQuestion, setOriginalQuestion] = useState<string | undefined>(undefined);
   const conversation = useConversation();
+  // Focused by WidgetFrame when the panel opens so the user can type immediately.
+  const composerRef = useRef<HTMLTextAreaElement>(null);
 
   function handleSelectAction(action: SuggestedAction): void {
     const form = ACTION_TO_FORM[action.id];
@@ -37,6 +39,7 @@ export default function App() {
       open={open}
       onToggle={() => setOpen((value) => !value)}
       onClose={() => setOpen(false)}
+      initialFocusRef={composerRef}
     >
       {formType && conversation.conversationId && conversation.sessionToken ? (
         <RequestForm
@@ -49,6 +52,7 @@ export default function App() {
         />
       ) : (
         <ConversationView
+          composerRef={composerRef}
           welcome={conversation.welcome}
           messages={conversation.messages}
           status={conversation.status}
@@ -57,6 +61,8 @@ export default function App() {
           onSend={conversation.send}
           onSelectAction={handleSelectAction}
           onRetry={conversation.retryLast}
+          onReconnect={conversation.reconnect}
+          onStartNew={conversation.startNew}
           onRate={conversation.rate}
           onDismissError={conversation.clearError}
         />

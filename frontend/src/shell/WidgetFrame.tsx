@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
-import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent, ReactNode, RefObject } from "react";
 
 import { postToHost } from "../host/messaging";
 import { Launcher } from "./Launcher";
@@ -18,6 +18,12 @@ export interface WidgetFrameProps {
   onClose: () => void;
   /** Panel body — the conversation view / forms rendered by sibling modules. */
   children: ReactNode;
+  /**
+   * Element to focus when the panel opens (e.g. the composer input) so a keyboard or
+   * screen-reader user lands ready to type. Falls back to the dialog container when
+   * absent or currently disabled (e.g. while the conversation is still connecting).
+   */
+  initialFocusRef?: RefObject<HTMLElement>;
 }
 
 const FOCUSABLE_SELECTOR = [
@@ -39,7 +45,13 @@ const FOCUSABLE_SELECTOR = [
  * - Traps Tab focus inside the panel, moves focus in on open, restores it to the
  *   launcher on close, and closes on Esc.
  */
-export function WidgetFrame({ open, onToggle, onClose, children }: WidgetFrameProps) {
+export function WidgetFrame({
+  open,
+  onToggle,
+  onClose,
+  children,
+  initialFocusRef,
+}: WidgetFrameProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const launcherRef = useRef<HTMLButtonElement>(null);
@@ -66,15 +78,21 @@ export function WidgetFrame({ open, onToggle, onClose, children }: WidgetFramePr
     return () => observer.disconnect();
   }, [report]);
 
-  // Move focus into the panel on open; restore it to the launcher on close.
+  // Move focus into the panel on open (preferring the composer input so the user can
+  // type immediately); restore it to the launcher on close.
   useEffect(() => {
     if (open) {
-      panelRef.current?.focus();
+      const target = initialFocusRef?.current as (HTMLElement & { disabled?: boolean }) | null;
+      if (target && !target.disabled) {
+        target.focus();
+      } else {
+        panelRef.current?.focus();
+      }
     } else if (wasOpenRef.current) {
       launcherRef.current?.focus();
     }
     wasOpenRef.current = open;
-  }, [open]);
+  }, [open, initialFocusRef]);
 
   const handlePanelKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") {
@@ -119,7 +137,6 @@ export function WidgetFrame({ open, onToggle, onClose, children }: WidgetFramePr
           ref={panelRef}
           className="cadre-panel"
           role="dialog"
-          aria-modal="true"
           aria-label="Cadre AI Assistant chat"
           tabIndex={-1}
           onKeyDown={handlePanelKeyDown}

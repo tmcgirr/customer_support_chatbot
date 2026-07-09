@@ -13,6 +13,7 @@ vi.mock("../api/client", async (importOriginal) => {
     ...actual,
     createConversation: vi.fn(),
     sendMessage: vi.fn(),
+    getTranscript: vi.fn(),
     submitFeedback: vi.fn(),
     newClientMessageId: vi.fn(() => "cmid_test"),
   };
@@ -22,10 +23,13 @@ import * as client from "../api/client";
 
 const mockedCreate = vi.mocked(client.createConversation);
 const mockedSend = vi.mocked(client.sendMessage);
+const mockedTranscript = vi.mocked(client.getTranscript);
+const mockedCmid = vi.mocked(client.newClientMessageId);
 
 // Captured stream callback so tests can drive events after render.
 let capturedOnEvent: ((event: StreamEvent) => void) | null = null;
 let resolveSend: (() => void) | null = null;
+let rejectSend: ((err: unknown) => void) | null = null;
 
 function Harness() {
   const c = useConversation();
@@ -39,6 +43,8 @@ function Harness() {
       onSend={c.send}
       onSelectAction={() => {}}
       onRetry={c.retryLast}
+      onReconnect={c.reconnect}
+      onStartNew={c.startNew}
       onRate={c.rate}
       onDismissError={c.clearError}
     />
@@ -66,11 +72,12 @@ beforeEach(() => {
     welcome: { text: "How can I help?", suggested_actions: [] },
   });
 
-  // Hold the stream open until the test resolves it; capture onEvent to drive frames.
+  // Hold the stream open until the test resolves/rejects it; capture onEvent for frames.
   mockedSend.mockImplementation((_cid, _token, _content, _cmid, onEvent) => {
     capturedOnEvent = onEvent;
-    return new Promise<void>((resolve) => {
+    return new Promise<void>((resolve, reject) => {
       resolveSend = resolve;
+      rejectSend = reject;
     });
   });
 });
@@ -162,16 +169,161 @@ describe("useConversation errors and cap", () => {
     expect(input).not.toBeDisabled();
   });
 
-  it("marks the turn failed when the stream closes with no terminal event", async () => {
+  it("marks the turn failed when the stream drops and the transcript has no reply", async () => {
+    // The reconcile fetch also fails (offline) → keep partial text, mark failed, retry.
+    mockedTranscript.mockRejectedValue(new Error("network"));
     await renderAndSend("hello");
     act(() => capturedOnEvent!({ event: "response.delta", data: { text: "Partial" } }));
     // Clean close with NO response.completed/failed/limit (a proxy/LB drop).
     await act(async () => {
       resolveSend?.();
     });
+    await waitFor(() =>
+      expect(screen.getByText(ERROR_COPY.generalFailure)).toBeInTheDocument(),
+    );
     expect(screen.getByText("Partial")).toBeInTheDocument();
-    expect(screen.getByText(ERROR_COPY.generalFailure)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+  });
+
+  it("reconciles to the completed answer when a dropped turn actually finished", async () => {
+    // The SSE frame was lost but the server persisted a completed reply.
+    mockedTranscript.mockResolvedValue({
+      conversation_id: "cnv_1",
+      messages: [
+        { id: "u1", role: "user", content: "hello", status: "completed", suggested_action_ids: [] },
+        {
+          id: "a1",
+          role: "assistant",
+          content: "Full answer from the server.",
+          status: "completed",
+          suggested_action_ids: [],
+        },
+      ],
+    });
+    await renderAndSend("hello");
+    act(() => capturedOnEvent!({ event: "response.delta", data: { text: "Full ans" } }));
+    await act(async () => {
+      resolveSend?.();
+    });
+    // The authoritative transcript replaces the partial stream; no error surfaces.
+    await waitFor(() =>
+      expect(screen.getByText("Full answer from the server.")).toBeInTheDocument(),
+    );
+    expect(screen.queryByText(ERROR_COPY.generalFailure)).not.toBeInTheDocument();
+  });
+});
+
+describe("useConversation reconnect", () => {
+  it("resumes a stored session from the transcript instead of creating a new one", async () => {
+    // Simulate a page reload: a prior session persisted in sessionStorage.
+    window.sessionStorage.setItem(
+      "cadre_widget_session_v1",
+      JSON.stringify({ conversationId: "cnv_prev", token: "tok_prev" }),
+    );
+    mockedTranscript.mockResolvedValue({
+      conversation_id: "cnv_prev",
+      messages: [
+        { id: "u1", role: "user", content: "earlier question", status: "completed", suggested_action_ids: [] },
+        { id: "a1", role: "assistant", content: "earlier answer", status: "completed", suggested_action_ids: [] },
+      ],
+    });
+
+    render(<Harness />);
+
+    // The transcript is restored; no new conversation is created.
+    await screen.findByText("earlier answer");
+    expect(screen.getByText("earlier question")).toBeInTheDocument();
+    expect(mockedTranscript).toHaveBeenCalledWith("cnv_prev", "tok_prev", expect.anything());
+    expect(mockedCreate).not.toHaveBeenCalled();
+  });
+
+  it("starts fresh when the stored session has expired (401)", async () => {
+    window.sessionStorage.setItem(
+      "cadre_widget_session_v1",
+      JSON.stringify({ conversationId: "cnv_old", token: "tok_old" }),
+    );
+    mockedTranscript.mockRejectedValue(
+      new client.ApiError("UNAUTHORIZED_SESSION", "expired", false, 401),
+    );
+
+    render(<Harness />);
+
+    // Falls back to a brand-new conversation (welcome shown).
+    await screen.findByText("How can I help?");
+    expect(mockedCreate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("useConversation recovery (review fixes)", () => {
+  it("disables input and offers a working recovery when the initial create fails", async () => {
+    mockedCreate.mockRejectedValueOnce(new Error("cold start")); // first create fails
+    render(<Harness />);
+
+    await screen.findByText(ERROR_COPY.startFailed);
+    // No live session → the composer is disabled so a typed message can't be dropped.
+    expect(screen.getByLabelText("Message")).toBeDisabled();
+    // "Try again" actually re-creates the conversation (the default mock resolves).
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await screen.findByText("How can I help?");
+    expect(screen.getByLabelText("Message")).not.toBeDisabled();
+  });
+
+  it("does not mark a dropped turn complete when only the PRIOR turn's reply exists", async () => {
+    mockedCmid.mockReturnValueOnce("cmid_1").mockReturnValueOnce("cmid_2");
+    const input = await renderAndSend("first");
+    act(() => capturedOnEvent!({ event: "response.delta", data: { text: "answer one" } }));
+    act(() => capturedOnEvent!({ event: "response.completed", data: { assistant_message_id: "a1" } }));
+    await act(async () => {
+      resolveSend?.();
+    });
+
+    // Turn 2 drops before persisting; the transcript still shows only turn 1's reply.
+    mockedTranscript.mockResolvedValue({
+      conversation_id: "cnv_1",
+      messages: [
+        { id: "u1", role: "user", content: "first", status: "completed", suggested_action_ids: [] },
+        { id: "a1", role: "assistant", content: "answer one", status: "completed", suggested_action_ids: [] },
+      ],
+    });
+    fireEvent.change(input, { target: { value: "second" } });
+    fireEvent.click(screen.getByRole("button", { name: /send message/i }));
+    await act(async () => {
+      resolveSend?.();
+    });
+
+    // The second question is NOT silently lost: it stays visible and retry is offered.
+    await waitFor(() =>
+      expect(screen.getByText(ERROR_COPY.generalFailure)).toBeInTheDocument(),
+    );
+    expect(screen.getByText("second")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+  });
+
+  it("expires the session on a 401 mid-turn: clears the spinner and disables input", async () => {
+    const input = await renderAndSend("hello");
+    act(() => capturedOnEvent!({ event: "response.delta", data: { text: "partial" } }));
+    await act(async () => {
+      rejectSend?.(new client.ApiError("UNAUTHORIZED_SESSION", "expired", false, 401));
+    });
+
+    await screen.findByText(ERROR_COPY.sessionExpired);
+    // Dead session → composer disabled, no stuck streaming placeholder, new-chat offered.
+    expect(input).toBeDisabled();
+    expect(screen.queryByText("partial")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start new chat" })).toBeInTheDocument();
+  });
+
+  it("starts fresh instead of a blank pane when the stored conversation is empty", async () => {
+    window.sessionStorage.setItem(
+      "cadre_widget_session_v1",
+      JSON.stringify({ conversationId: "cnv_empty", token: "tok" }),
+    );
+    mockedTranscript.mockResolvedValue({ conversation_id: "cnv_empty", messages: [] });
+
+    render(<Harness />);
+
+    await screen.findByText("How can I help?"); // fresh create's welcome
+    expect(mockedCreate).toHaveBeenCalledTimes(1);
   });
 });
 

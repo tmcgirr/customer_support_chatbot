@@ -19,13 +19,36 @@ export interface CreateConversationResponse {
 export type MessageRole = "user" | "assistant";
 export type MessageStatus = "streaming" | "completed" | "failed" | "partial";
 
+// Approved knowledge source shown on a grounded answer (V7, flag-gated display).
+export interface Citation {
+  title: string;
+  url: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: MessageRole;
   content: string;
   status: MessageStatus;
   suggestedActions: SuggestedAction[];
+  sources?: Citation[];
   clientMessageId?: string;
+}
+
+// GET transcript (contracts §3.3) — used to resume a conversation after a reload
+// or a dropped stream.
+export interface TranscriptMessage {
+  id: string;
+  role: MessageRole;
+  content: string;
+  status: MessageStatus;
+  suggested_action_ids: string[];
+  sources?: Citation[];
+}
+
+export interface TranscriptResponse {
+  conversation_id: string;
+  messages: TranscriptMessage[];
 }
 
 export type StreamEventName =
