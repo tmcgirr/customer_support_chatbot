@@ -55,7 +55,13 @@ vi.mock("./api", () => ({
 // Totals asserted below (42, 9, 3) are chosen so they don't also appear as a
 // count inside the by_* breakdown tables.
 const DASHBOARD = {
-  conversations: { total: 42, by_status: { active: 40, closed: 2 }, by_outcome: { resolved: 30 } },
+  conversations: {
+    total: 42,
+    by_status: { active: 40, closed: 2 },
+    by_outcome: { resolved: 30 },
+    by_topic: { pricing: 5, security: 4, unset: 99 },
+    by_intent: { evaluate: 6, learn: 2 },
+  },
   requests: {
     total: 9,
     by_type: { strategy_call: 5, portal_support: 4 },
@@ -164,6 +170,9 @@ describe("AdminApp", () => {
     expect(screen.getByText("3")).toBeInTheDocument();
     expect(screen.getByText("admin (admin)")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Sign out" })).toBeInTheDocument();
+    // Top topics ranks real topics; the "unset" (not-yet-labeled) placeholder is hidden.
+    expect(screen.getByText("Top topics")).toBeInTheDocument();
+    expect(screen.queryByText("unset")).not.toBeInTheDocument();
   });
 
   it("shows an error message on invalid credentials", async () => {

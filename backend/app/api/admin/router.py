@@ -43,6 +43,9 @@ class ConversationStats(BaseModel):
     total: int
     by_status: dict[str, int]
     by_outcome: dict[str, int]
+    # V1.5 analytics: computed topic/intent labels ("unset" = not yet labeled).
+    by_topic: dict[str, int]
+    by_intent: dict[str, int]
 
 
 class RequestStats(BaseModel):
@@ -294,6 +297,8 @@ async def dashboard(
             total=await repo.total(),
             by_status=await repo.count_by("status"),
             by_outcome=await repo.count_by("outcome"),
+            by_topic=await repo.count_by("labels.topic"),
+            by_intent=await repo.count_by("labels.intent"),
         ),
         requests=RequestStats(
             total=await request_repo.total(),

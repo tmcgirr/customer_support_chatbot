@@ -59,6 +59,17 @@ class UnsupportedQuestion(BaseModel):
     at: datetime
 
 
+class ConversationLabels(BaseModel):
+    """Computed topic/intent labels for analytics (V1.5). Derived AFTER a conversation
+    ends by the async labeler — never on the request path. ``method`` records whether a
+    deterministic rule or the model produced them (hybrid pipeline)."""
+
+    topic: str
+    intent: str
+    method: Literal["rules", "model"]
+    labeled_at: datetime
+
+
 class Conversation(BaseModel):
     # populate_by_name lets us construct with `id=` while Mongo stores `_id`;
     # protected_namespaces=() allows the contract field named `model`.
@@ -74,6 +85,7 @@ class Conversation(BaseModel):
     message_cap: int = 40
     outcome: str | None = None
     unsupported_questions: list[UnsupportedQuestion] = Field(default_factory=list)
+    labels: ConversationLabels | None = None  # computed post-hoc by the analytics labeler
     prompt_version: str | None = None
     model: str | None = None
     schema_version: int = 1

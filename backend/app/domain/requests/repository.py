@@ -148,6 +148,13 @@ class RequestRepository:
         )
         return [RequestRecord.model_validate(doc) for doc in docs]
 
+    async def request_type_for_conversation(self, conversation_id: str) -> str | None:
+        """The type of the first request submitted in a conversation, or None — the
+        analytics labeler uses it as a strong 'the visitor asked for contact' signal.
+        Projection-only (no PII materialized)."""
+        doc = await self._collection.find_one({"conversation_id": conversation_id}, {"type": 1})
+        return str(doc["type"]) if doc is not None and "type" in doc else None
+
     async def redact_for_deletion(self, request_ids: list[str]) -> int:
         """Subject erasure: strip contact PII + the per-type ``fields`` payload from
         matched requests, keeping the non-PII skeleton (_id, type, status, reference,

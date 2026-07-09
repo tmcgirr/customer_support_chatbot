@@ -1,8 +1,22 @@
 import type { AdminClient } from "./api";
 import { useAdminQuery } from "./useAdminQuery";
 
-function BreakdownTable({ title, rows }: { title: string; rows: Record<string, number> }) {
-  const entries = Object.entries(rows);
+function BreakdownTable({
+  title,
+  rows,
+  sorted = false,
+}: {
+  title: string;
+  rows: Record<string, number>;
+  sorted?: boolean;
+}) {
+  // `rows ?? {}` guards against a version-skewed backend that omits a newer field
+  // (an undefined here would throw in render and white-screen the whole console).
+  const entries = sorted
+    ? Object.entries(rows ?? {})
+        .filter(([key]) => key !== "unset") // hide the not-yet-labeled placeholder from ranked cards
+        .sort((a, b) => b[1] - a[1]) // highest count first (top topics)
+    : Object.entries(rows ?? {});
   return (
     <div className="admin-card">
       <h3>{title}</h3>
@@ -57,6 +71,8 @@ export default function Dashboard({
       <div className="admin-card-grid">
         <BreakdownTable title="Conversations by status" rows={data.conversations.by_status} />
         <BreakdownTable title="Conversations by outcome" rows={data.conversations.by_outcome} />
+        <BreakdownTable title="Top topics" rows={data.conversations.by_topic} sorted />
+        <BreakdownTable title="Visitor intent" rows={data.conversations.by_intent} sorted />
         <BreakdownTable title="Requests by type" rows={data.requests.by_type} />
         <BreakdownTable title="Requests by status" rows={data.requests.by_status} />
       </div>

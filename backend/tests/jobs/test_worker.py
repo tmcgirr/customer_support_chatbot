@@ -174,6 +174,42 @@ async def test_worker_polls_indexing_to_indexed(db: Database) -> None:
     assert source is not None and source.indexing_status == "indexed"
 
 
+async def test_worker_dispatches_label_conversations(db: Database) -> None:
+    # The label_conversations job routes through dispatch with the injected fake adapter;
+    # an ended, unlabeled conversation with no strong signal gets a model label.
+    from datetime import UTC, datetime
+
+    from app.domain.conversations.models import Conversation, Message
+    from app.domain.conversations.repository import ConversationRepository
+    from tests.fakes import FakeAdapter
+
+    now = datetime.now(UTC)
+    convo = Conversation(
+        id="cnv_lbl",
+        status="completed",
+        started_at=now,
+        last_activity_at=now,
+        messages=[
+            Message(id="m", role="user", content="Tell me about your company.", created_at=now)
+        ],
+    )
+    await db["conversations"].insert_one(convo.model_dump(by_alias=True))
+    jobs = JobRepository(db["jobs"])
+    job = await jobs.enqueue("label_conversations")
+
+    adapter = FakeAdapter(classify_result='{"topic": "company", "intent": "learn"}')
+    worker = Worker(db, settings=get_settings(), adapter=adapter)
+    claimed = await jobs.claim(worker._owner, lease_seconds=60)  # noqa: SLF001
+    assert claimed is not None
+    await worker._run_job(claimed)  # noqa: SLF001
+
+    doc = await db["jobs"].find_one({"_id": job.id})
+    assert doc is not None and doc["status"] == "done"
+    labeled = await ConversationRepository(db["conversations"]).get_transcript("cnv_lbl")
+    assert labeled is not None and labeled.labels is not None
+    assert labeled.labels.topic == "company"
+
+
 async def test_worker_deadletter_marks_indexing_failed(db: Database) -> None:
     # A poll_indexing job that exhausts its budget (store keeps erroring) must dead-letter
     # AND reconcile the source's status to 'failed' — not leave it stuck at 'pending'

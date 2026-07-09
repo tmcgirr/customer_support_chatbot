@@ -44,6 +44,9 @@ export interface DashboardResponse {
     total: number;
     by_status: Record<string, number>;
     by_outcome: Record<string, number>;
+    // V1.5 analytics: computed topic/intent labels ("unset" = not yet labeled).
+    by_topic: Record<string, number>;
+    by_intent: Record<string, number>;
   };
   requests: {
     total: number;

@@ -42,12 +42,18 @@ class FakeAdapter:
         *,
         raises: Exception | None = None,
         rounds: list[list[StreamEvent]] | None = None,
+        classify_result: str | None = None,
+        classify_raises: Exception | None = None,
     ) -> None:
         self.events: list[StreamEvent] = events if events is not None else []
         self.raises = raises
         self._rounds = rounds
         self._round_index = 0
         self.calls: list[_Call] = []
+        # For the offline classify() path (analytics labeling).
+        self._classify_result = classify_result
+        self._classify_raises = classify_raises
+        self.classify_calls: list[str] = []
 
     @classmethod
     def replying(cls, text: str, *, usage: Usage | None = None) -> "FakeAdapter":
@@ -83,6 +89,12 @@ class FakeAdapter:
             yield event
         if self.raises is not None:
             raise self.raises
+
+    async def classify(self, *, instructions: str, text: str) -> str:
+        self.classify_calls.append(text)
+        if self._classify_raises is not None:
+            raise self._classify_raises
+        return self._classify_result or '{"topic": "other", "intent": "learn"}'
 
 
 class FakeDeliveryClient:

@@ -17,12 +17,14 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.agent.adapter import ModelAdapter, OpenAIResponsesAdapter
 from app.core import ids
 from app.core.config import Settings, get_settings
 from app.core.db import create_mongo_client, get_database
 from app.core.logging import configure_logging, get_logger
 from app.domain.aggregates.repository import AggregatesRepository
 from app.domain.audit.repository import AuditRepository
+from app.domain.canonical.repository import CanonicalAnswerRepository
 from app.domain.conversations.repository import ConversationRepository
 from app.domain.delivery.adapters import build_delivery_client
 from app.domain.delivery.client import DeliveryClient
@@ -35,6 +37,7 @@ from app.domain.jobs.tasks import (
     run_abandonment_sweep,
     run_daily_aggregates,
     run_knowledge_review_reminder,
+    run_label_conversations,
     run_poll_indexing,
     run_privacy_delete,
     run_privacy_reconcile,
@@ -59,6 +62,7 @@ _SCHEDULE: dict[JobType, int] = {
     "abandonment_sweep": 3600,
     "delivery_reconcile": 300,
     "daily_aggregates": 86_400,
+    "label_conversations": 3600,  # hourly: keep the analytics dashboard reasonably fresh
     "knowledge_review_reminder": 86_400,
     "retention_sweep": 86_400,
     "privacy_reconcile": 300,
@@ -75,13 +79,17 @@ class Worker:
         settings: Settings,
         delivery_client: DeliveryClient | None = None,
         knowledge_store: KnowledgeStore | None = None,
+        adapter: ModelAdapter | None = None,
     ) -> None:
         self._jobs = JobRepository(db["jobs"])
         self._conversations = ConversationRepository(db["conversations"])
         self._requests = RequestRepository(db["requests"])
         self._feedback = FeedbackRepository(db["feedback"])
+        self._canonical = CanonicalAnswerRepository(db["canonical_answers"])
         self._knowledge = KnowledgeSourceRepository(db["knowledge_sources"])
         self._knowledge_store = knowledge_store or build_knowledge_store(settings)
+        # Offline model access for analytics labeling (classify only). Tests inject a fake.
+        self._adapter: ModelAdapter = adapter or OpenAIResponsesAdapter()
         self._aggregates = AggregatesRepository(db["aggregates"])
         self._privacy = PrivacyRequestRepository(db["privacy_requests"])
         self._audit = AuditRepository(db["audit"])
@@ -272,6 +280,11 @@ class Worker:
             await run_daily_aggregates(
                 self._conversations, self._requests, self._feedback, self._aggregates
             )
+        elif job_type == "label_conversations":
+            counts = await run_label_conversations(
+                self._conversations, self._requests, self._canonical, self._adapter
+            )
+            logger.info("worker.conversations_labeled", extra={"context": {"counts": counts}})
         elif job_type == "retention_sweep":
             counts = await run_retention_sweep(
                 self._conversations,

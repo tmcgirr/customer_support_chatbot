@@ -15,7 +15,7 @@ from pymongo import ASCENDING, DESCENDING, ReturnDocument
 
 from app.core import ids
 from app.core.config import get_settings
-from app.domain.conversations.models import Conversation, Message
+from app.domain.conversations.models import Conversation, ConversationLabels, Message
 
 Collection = AsyncIOMotorCollection[dict[str, Any]]
 
@@ -340,6 +340,31 @@ class ConversationRepository:
         await self._collection.update_one(
             {"_id": conversation_id},
             {"$push": {"unsupported_questions": {"question": question, "at": _now()}}},
+        )
+
+    # --- Analytics labeling (V1.5, worker-owned) ---
+
+    # Terminal, non-deleted states a conversation can be labeled in.
+    _ENDED_STATUSES = ("completed", "abandoned", "blocked")
+
+    async def list_unlabeled_ended(self, *, limit: int) -> list[Conversation]:
+        """Ended conversations that have no computed labels yet (oldest activity first,
+        so the backlog drains FIFO). ``{labels: null}`` matches both missing and null."""
+        docs = (
+            await self._collection.find(
+                {"status": {"$in": list(self._ENDED_STATUSES)}, "labels": None}
+            )
+            .sort("last_activity_at", ASCENDING)
+            .limit(limit)
+            .to_list(length=limit)
+        )
+        return [Conversation.model_validate(doc) for doc in docs]
+
+    async def set_labels(self, conversation_id: str, labels: ConversationLabels) -> None:
+        """Attach computed topic/intent labels (idempotent overwrite). Does NOT touch
+        last_activity_at — a background annotation must not resurrect a conversation."""
+        await self._collection.update_one(
+            {"_id": conversation_id}, {"$set": {"labels": labels.model_dump()}}
         )
 
     # --- Read-only admin queries ---

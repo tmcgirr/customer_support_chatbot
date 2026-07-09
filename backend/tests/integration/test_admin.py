@@ -51,6 +51,8 @@ async def test_dashboard_counts(client: httpx.AsyncClient) -> None:
     assert body["conversations"]["total"] >= 1
     assert body["requests"]["total"] >= 1
     assert body["requests"]["by_type"].get("strategy_call", 0) >= 1
+    # V1.5 analytics buckets are present (unlabeled conversations count as "unset").
+    assert "by_topic" in body["conversations"] and "by_intent" in body["conversations"]
 
 
 async def test_conversation_detail_shows_trace_metadata(

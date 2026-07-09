@@ -39,6 +39,94 @@ class _NoPollStore:
         raise AssertionError("unexpected detach")
 
 
+async def test_label_conversations_labels_and_is_idempotent(db: Database) -> None:
+    from app.domain.canonical.repository import CanonicalAnswerRepository
+    from app.domain.conversations.models import Conversation, Message
+    from app.domain.jobs.tasks import run_label_conversations
+    from app.domain.requests.models import Contact, RequestRecord
+    from tests.fakes import FakeAdapter
+
+    conversations = ConversationRepository(db["conversations"])
+    requests = RequestRepository(db["requests"])
+    canonical = CanonicalAnswerRepository(db["canonical_answers"])
+    now = datetime.now(UTC)
+
+    # A: ended conversation with a submitted request → rules label it (no model call).
+    convo_a = Conversation(id="cnv_a", status="completed", started_at=now, last_activity_at=now)
+    await db["conversations"].insert_one(convo_a.model_dump(by_alias=True))
+    await db["requests"].insert_one(
+        RequestRecord(
+            id="req_a",
+            type="strategy_call",
+            conversation_id="cnv_a",
+            idempotency_key="k",
+            reference="R",
+            contact=Contact(email="a@b.com"),
+            consent_version="c",
+            created_at=now,
+        ).model_dump(by_alias=True)
+    )
+    # B: ended conversation with no strong signal → model labels it.
+    convo_b = Conversation(
+        id="cnv_b",
+        status="abandoned",
+        started_at=now,
+        last_activity_at=now,
+        messages=[Message(id="m", role="user", content="How does AI help retail?", created_at=now)],
+    )
+    await db["conversations"].insert_one(convo_b.model_dump(by_alias=True))
+    # C: still active → must NOT be labeled.
+    convo_c = Conversation(id="cnv_c", status="active", started_at=now, last_activity_at=now)
+    await db["conversations"].insert_one(convo_c.model_dump(by_alias=True))
+
+    adapter = FakeAdapter(classify_result='{"topic": "industry", "intent": "learn"}')
+    result = await run_label_conversations(conversations, requests, canonical, adapter)
+    assert result == {"scanned": 2, "labeled": 2}
+
+    a = await conversations.get_transcript("cnv_a")
+    assert a is not None and a.labels is not None
+    assert a.labels.intent == "request_contact" and a.labels.method == "rules"
+    b = await conversations.get_transcript("cnv_b")
+    assert b is not None and b.labels is not None
+    assert b.labels.topic == "industry" and b.labels.method == "model"
+    c = await conversations.get_transcript("cnv_c")
+    assert c is not None and c.labels is None  # active is skipped
+
+    # Idempotent: a second run finds nothing unlabeled.
+    again = await run_label_conversations(conversations, requests, canonical, adapter)
+    assert again == {"scanned": 0, "labeled": 0}
+
+
+async def test_label_conversations_stops_at_time_budget(db: Database) -> None:
+    # A zero time budget stops the loop after the first conversation, so a large residue
+    # backlog can't run the handler past the worker's job timeout (it drains next run).
+    from app.domain.canonical.repository import CanonicalAnswerRepository
+    from app.domain.conversations.models import Conversation, Message
+    from app.domain.jobs.tasks import run_label_conversations
+    from tests.fakes import FakeAdapter
+
+    now = datetime.now(UTC)
+    for i in range(3):
+        convo = Conversation(
+            id=f"cnv_{i}",
+            status="completed",
+            started_at=now,
+            last_activity_at=now,
+            messages=[Message(id="m", role="user", content=f"Question {i}?", created_at=now)],
+        )
+        await db["conversations"].insert_one(convo.model_dump(by_alias=True))
+
+    result = await run_label_conversations(
+        ConversationRepository(db["conversations"]),
+        RequestRepository(db["requests"]),
+        CanonicalAnswerRepository(db["canonical_answers"]),
+        FakeAdapter(classify_result='{"topic": "other", "intent": "learn"}'),
+        time_budget_seconds=0.0,
+    )
+    # Deadline is already past → the loop breaks after processing exactly one.
+    assert result == {"scanned": 1, "labeled": 1}
+
+
 async def test_poll_indexing_noops_on_inactive_source(db: Database) -> None:
     # A source removed/replaced after approval is DETACHED; polling its status would
     # 404 and dead-letter uselessly. run_poll_indexing must no-op on lifecycle != active.

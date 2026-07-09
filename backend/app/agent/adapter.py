@@ -106,6 +106,12 @@ class ModelAdapter(Protocol):
         tools: list[ToolSpec] | None = None,
     ) -> AsyncIterator[StreamEvent]: ...
 
+    async def classify(self, *, instructions: str, text: str) -> str:
+        """One-shot, non-streaming, tool-less completion for offline classification
+        (e.g. analytics labeling). Returns the model's raw text; the caller validates
+        it. Read-only — no tools, never persisted provider-side."""
+        ...
+
 
 # --- Helpers ------------------------------------------------------------------
 
@@ -257,6 +263,23 @@ class OpenAIResponsesAdapter:
         # upstream truncation) is a failure, not a finished answer.
         if not saw_completed:
             raise AdapterError()
+
+    async def classify(self, *, instructions: str, text: str) -> str:
+        """Non-streaming single completion. Provider errors are normalized to
+        AdapterError so no OpenAI type escapes (invariant #4). No tools, ``store=False``."""
+        try:
+            response = await self._client.responses.create(
+                model=self._model,
+                instructions=instructions,
+                input=text,
+                stream=False,
+                store=False,
+            )
+        except Exception:  # normalize every provider failure at the boundary
+            # `from None` severs the provider exception (matches send()/_stream()): no
+            # OpenAI-typed object is retained on __cause__ (invariant #4).
+            raise AdapterError() from None
+        return str(getattr(response, "output_text", "") or "")
 
     async def aclose(self) -> None:
         await self._client.close()

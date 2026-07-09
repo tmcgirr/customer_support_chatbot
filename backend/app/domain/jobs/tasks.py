@@ -5,10 +5,14 @@ None touch message content or PII — they operate on counts, timestamps, and
 local IDs (CLAUDE.md invariant #5).
 """
 
+import time
 from datetime import UTC, datetime, timedelta
 
+from app.agent.adapter import ModelAdapter
 from app.domain.aggregates.repository import AggregatesRepository
+from app.domain.analytics.labeler import ConversationLabeler
 from app.domain.audit.repository import AuditRepository
+from app.domain.canonical.repository import CanonicalAnswerRepository
 from app.domain.conversations.repository import (
     REQUEST_CONVERSION_OUTCOMES,
     ConversationRepository,
@@ -59,6 +63,8 @@ async def run_daily_aggregates(
             "total": await conversations.total(),
             "by_status": await conversations.count_by("status"),
             "by_outcome": await conversations.count_by("outcome"),
+            "by_topic": await conversations.count_by("labels.topic"),
+            "by_intent": await conversations.count_by("labels.intent"),
         },
         "requests": {
             "total": await requests.total(),
@@ -73,6 +79,38 @@ async def run_daily_aggregates(
     date_key = _now().date().isoformat()
     await aggregates.record_daily(date_key, payload)
     return payload
+
+
+async def run_label_conversations(
+    conversations: ConversationRepository,
+    requests: RequestRepository,
+    canonical: CanonicalAnswerRepository,
+    adapter: ModelAdapter,
+    *,
+    batch_limit: int = 200,
+    time_budget_seconds: float = 30.0,
+) -> dict[str, int]:
+    """Label ended, unlabeled conversations with a topic + intent (hybrid: rules first,
+    model for the residue). Idempotent — already-labeled conversations are skipped, and a
+    model failure leaves a conversation unlabeled to retry next run (never dead-letters).
+
+    Bounded by a wall-clock budget so a large residue backlog can't run the handler past
+    the worker's job timeout (which would dead-letter and page): progress commits per
+    conversation, so the FIFO backlog just drains over successive runs."""
+    pending = await conversations.list_unlabeled_ended(limit=batch_limit)
+    labeler = ConversationLabeler(canonical, requests, adapter)
+    deadline = time.monotonic() + time_budget_seconds
+    scanned = 0
+    labeled = 0
+    for conversation in pending:
+        scanned += 1
+        labels = await labeler.label(conversation)
+        if labels is not None:
+            await conversations.set_labels(conversation.id, labels)
+            labeled += 1
+        if time.monotonic() >= deadline:
+            break  # stop before the worker's hard job timeout; the rest go next run
+    return {"scanned": scanned, "labeled": labeled}
 
 
 async def run_retention_sweep(

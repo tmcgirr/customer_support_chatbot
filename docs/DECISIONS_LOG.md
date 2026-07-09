@@ -558,3 +558,35 @@ Choices made during implementation that the planning docs did not fully specify
 - **Verified:** full backend suite (ruff + mypy + pytest, incl. new poll-lifecycle/dead-letter,
   oversized-body 413, and audit-before tests) + 45 frontend tests (build + vitest, incl. label +
   401-routing coverage).
+
+## V1.5 — Conversation topic/intent labeling (analytics) (2026-07-09)
+
+- **Ended conversations are labeled {topic, intent} by an async worker job, hybrid engine.**
+  Rules first (a submitted request, or a canonical-answer hit → deterministic, no model $);
+  the residue (open Q&A) is labeled by the model via a new provider-isolated
+  `adapter.classify` (non-streaming, no tools, `store=False`). Labels live on the conversation
+  doc and roll up into `daily_aggregates` + the admin Dashboard (`by_topic` / `by_intent`).
+  Never on the request path; idempotent; a model failure leaves a conversation unlabeled to
+  retry next run (never dead-letters). Cadence hourly; the `label_conversations` job is a
+  scheduler singleton (deduped via `has_active`).
+- **Adversarial-review fixes (4 confirmed; 3 rejected).**
+  1. (HIGH) The rule map keyed off GUESSED canonical intents (`security`/`ai_maturity`/`portal`)
+     instead of the real seeded ones (`data_security`/`ai_maturity_index`/`portal_access`), so
+     the rule labeler silently never fired for 3 of its topics (pushed them to the paid model,
+     and mislabeled the security+request case). Root cause the tests hid: they fed fictional
+     intent strings. Now keyed by the actual `canonical_answers.intent` values (single
+     intent→(topic,intent) map), and the tests use real intents.
+  2. (MED) `batch_limit=200` × a serial model call each could exceed `worker_job_timeout_seconds`
+     (50s) on a residue backlog → the job times out, retries, **dead-letters**, and fires a false
+     CRITICAL page. Now each classify is bounded (`asyncio.wait_for`, 12s) and the run is bounded
+     by a wall-clock budget (30s); progress commits per conversation, so the FIFO backlog drains
+     over successive runs instead of dead-lettering.
+  3. (MED) `Dashboard` called `Object.entries(rows)` with no null guard — a version-skewed
+     backend omitting `by_topic`/`by_intent` would throw in render and (no error boundary)
+     white-screen the whole admin console. Now `Object.entries(rows ?? {})`.
+  4. (LOW) The `"unset"` (not-yet-labeled) bucket ranked #1 in the sorted "Top topics" / "Visitor
+     intent" cards. Now excluded from those ranked cards.
+  Also: `classify` uses `raise AdapterError() from None` (matches the module convention; no
+  provider exception retained on `__cause__`).
+- **Verified:** 314 backend + 45 frontend tests (rules on real intents, model-residue via
+  FakeAdapter.classify, job idempotency + time-budget break, dashboard buckets, "unset" hidden).
