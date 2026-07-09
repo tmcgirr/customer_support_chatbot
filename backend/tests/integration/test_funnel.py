@@ -53,16 +53,27 @@ async def test_funnel_stages_overall_and_breakdowns(
                 topic="security",
                 intent="request_contact",
             ),
+            _convo(  # SINGLE-TURN conversion: must fold up into asked+engaged (monotone)
+                "c4",
+                message_count=1,
+                outcome="support_request_created",
+                topic="portal",
+                intent="request_contact",
+            ),
         ]
     )
     resp = await client.get("/api/v1/admin/funnel", auth=ADMIN_AUTH)
     assert resp.status_code == 200
     body = resp.json()
 
-    assert body["overall"] == {"visited": 3, "asked": 2, "engaged": 1, "requested": 1}
+    # 4 visited; c2/c3/c4 asked; c3 (multi-turn) + c4 (converted→folded) engaged; c3/c4 requested.
+    assert body["overall"] == {"visited": 4, "asked": 3, "engaged": 2, "requested": 2}
+    # Monotone: every stage ≤ the prior, overall AND per bucket.
+    for stage in [body["overall"], *body["by_topic"].values(), *body["by_intent"].values()]:
+        assert stage["visited"] >= stage["asked"] >= stage["engaged"] >= stage["requested"]
+    # The single-turn conversion counts as engaged for its topic (folded up).
+    assert body["by_topic"]["portal"] == {"visited": 1, "asked": 1, "engaged": 1, "requested": 1}
     assert body["by_topic"]["pricing"] == {"visited": 2, "asked": 1, "engaged": 0, "requested": 0}
-    assert body["by_topic"]["security"] == {"visited": 1, "asked": 1, "engaged": 1, "requested": 1}
-    assert body["by_intent"]["request_contact"]["requested"] == 1
 
 
 async def test_funnel_readable_by_viewer(client: httpx.AsyncClient) -> None:

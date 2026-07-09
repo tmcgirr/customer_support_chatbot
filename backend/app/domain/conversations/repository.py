@@ -401,17 +401,32 @@ class ConversationRepository:
         ``labels.intent``) or a single ``"all"`` bucket when ``field`` is None. Stages:
         visited (any conversation) → asked (≥1 user message) → engaged (≥2, multi-turn) →
         requested (converted to a contact request, via the outcome). A missing group value
-        (unlabeled) is bucketed as ``"unset"``."""
+        (unlabeled) is bucketed as ``"unset"``.
+
+        The funnel is MONOTONE by construction: a later stage implies all earlier ones, so a
+        converted visitor is folded into asked+engaged even if they converted in a single turn
+        (``requested ⊆ engaged ⊆ asked ⊆ visited`` always — the bars can never invert)."""
         conversion = list(REQUEST_CONVERSION_OUTCOMES)
+        converted: Any = {"$in": ["$outcome", conversion]}
         group_id: Any = f"${field}" if field is not None else "all"
         pipeline: list[dict[str, Any]] = [
             {
                 "$group": {
                     "_id": group_id,
                     "visited": {"$sum": 1},
-                    "asked": {"$sum": {"$cond": [{"$gte": ["$message_count", 1]}, 1, 0]}},
-                    "engaged": {"$sum": {"$cond": [{"$gte": ["$message_count", 2]}, 1, 0]}},
-                    "requested": {"$sum": {"$cond": [{"$in": ["$outcome", conversion]}, 1, 0]}},
+                    # A conversion implies the visitor asked + engaged (fold it up), so the
+                    # funnel never shows requested > engaged for a single-turn conversion.
+                    "asked": {
+                        "$sum": {
+                            "$cond": [{"$or": [{"$gte": ["$message_count", 1]}, converted]}, 1, 0]
+                        }
+                    },
+                    "engaged": {
+                        "$sum": {
+                            "$cond": [{"$or": [{"$gte": ["$message_count", 2]}, converted]}, 1, 0]
+                        }
+                    },
+                    "requested": {"$sum": {"$cond": [converted, 1, 0]}},
                 }
             }
         ]

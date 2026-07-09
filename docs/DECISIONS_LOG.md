@@ -644,3 +644,14 @@ Choices made during implementation that the planning docs did not fully specify
      hides the button after success (no confusing re-click 400).
 - **Verified:** 336 backend + 47 frontend tests (ordering, partial-regen, stable-intent, dedup,
   timeout/truncation, approve/run-now UI). ruff + mypy clean.
+
+## V1.5 — Funnel analytics (2026-07-09)
+
+- **Conversion funnel** (visited → asked → engaged → requested), overall + by topic/intent, from
+  conversation counts (`ConversationRepository.funnel`); admin **Funnel** tab. Read-only, counts only.
+- **Adversarial-review fix (1 confirmed, MED):** `requested` was derived from `outcome` independent
+  of `message_count`, so a single-turn conversion made `requested > engaged` — the funnel inverted.
+  Fixed by folding a conversion up into asked+engaged, so the funnel is monotone by construction
+  (`requested ⊆ engaged ⊆ asked ⊆ visited` always). ("unset" bucket for unlabeled conversations was
+  reviewed and judged correct — kept.)
+- **Verified:** 338 backend (incl. single-turn-conversion monotonicity) + 48 frontend tests.
