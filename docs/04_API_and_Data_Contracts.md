@@ -191,7 +191,7 @@ Codes: `INVALID_REQUEST`, `INVALID_EMAIL`, `UNAUTHORIZED_SESSION`, `CONVERSATION
 }
 ```
 
-Notes: intent/topic labels are **not** stored at POC (deferred to V1.5, computed asynchronously). Conversation state machine collapses to the statuses above — `awaiting_user`/`awaiting_confirmation` were UI states, not persistence states.
+Notes: intent/topic labels were not stored at POC. **As of V1.5 they are stored** on the conversation, computed asynchronously by the worker (never on the request path) — see [V1.5 additions](#v15-additions-to-the-data-model) below. Conversation state machine collapses to the statuses above — `awaiting_user`/`awaiting_confirmation` were UI states, not persistence states.
 
 ## requests
 
@@ -239,6 +239,24 @@ Claim: `findOneAndUpdate({status:"pending", available_at:{$lte:now}}, {$set:{sta
 `{ _id, type: "access|deletion", conversation_id?, requester_email, verification_status, status, created_at, completed_at }` — deletion touches one store.
 
 Removed vs Revision 2: `message_projections`, `visitor_sessions`, `workflow_instances`, `tool_executions` (read-only tool calls are logged structurally, not persisted as business records), `strategy_call_requests`, `support_requests`, `sync_jobs`, `reconciliation_results`, `conversation_summaries`, `analytics_events` (POC analytics derive from conversations/requests), `dataset_candidates`, `evaluation_*` (golden set lives in the repo; result history added at V1.5), `admin_users` (POC single login; V1 identity provider).
+
+## V1.5 additions to the data model
+
+The V1.5 analytics wave added the following (all computed off the request path by the worker;
+free text is PII-masked in the admin API). The code and the
+[Analytics & insights](capabilities/analytics-and-insights.md) capability doc are the source of truth.
+
+- **Conversation labels** — `conversation.labels` (topic + intent), computed asynchronously.
+- **Conversation summary** — `conversation.summary` (a TL;DR + key points), **embedded** in the
+  conversation document (not a separate collection — consistent with the removal above).
+- **`insights_reports`** (new collection) — dated period snapshots (`<type>:<key>` id, e.g.
+  `daily:2026-07-08`): question clusters, coverage, proposed FAQs, and an LLM narrative. The
+  knowledge-gap ranking is a read-side view over these; it adds no new collection.
+- **`daily_aggregates`** — dated count snapshots powering the dashboard/funnel.
+- **`jobs.type`** additionally includes the analytics jobs: `label_conversations`,
+  `generate_insights`, `summarize_conversations`, `daily_aggregates`.
+- **Roles/audit (V1):** admin uses `admin`/`viewer` roles; every reveal/export and content/deletion
+  action writes an append-only `audit` record (see [admin roles & audit](capabilities/admin-roles-and-audit.md)).
 
 ---
 

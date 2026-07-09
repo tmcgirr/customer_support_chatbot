@@ -1,5 +1,11 @@
 # QUICKSTART — Cadre AI Support Chatbot with Claude Code
 
+> **Historical — this describes the original build sequence** (bootstrapping the project with
+> Claude Code). The project is now built (V1 + V1.5). For the current entry point — what it is,
+> how to run it, and the documentation map — start at the **[repository README](README.md)** and
+> the **[Capabilities Catalog](docs/capabilities/)**. This file is kept as a record of how the
+> build was orchestrated.
+
 This folder is a **starter package**, not the built project. It contains the project
 memory (`CLAUDE.md`), the execution plan (`plan.md`), two subagents
 (`.claude/agents/`), and the design docs (`docs/`). Claude Code builds everything else,

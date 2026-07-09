@@ -50,7 +50,7 @@ The POC must demonstrate, end to end on real infrastructure, that the assistant 
 3. Recommend a likely Cadre service through brief guided discovery.
 4. Collect and persist a strategy-call request with review, consent, and confirmation.
 5. Provide portal guidance and collect a portal-support request.
-6. Explain the AI Maturity Index using approved or clearly provisional content.
+6. Explain what the AI Maturity Index is using approved canonical content only, and **defer the assessment itself to the business** — the bot never runs, scores, or offers to run an assessment. *(The V1 "AI Maturity mini-assessment" was removed from scope on 2026-07-09; see doc 02 §5.)*
 7. Explain Cadre's general LLM-selection and security approach, escalating specifics.
 8. Escalate unsupported or sensitive questions instead of guessing, and record them.
 9. Make conversations and requests visible to administrators (read-only).
@@ -107,7 +107,7 @@ The POC and V1 will not:
 1. **Company and industry fit.** Approved overview; supported industries without invented client examples; offer discovery or a strategy call.
 2. **Strategy-call request.** Structured form; review screen; consent; idempotent submission; local persistence with reference; approved success message with no promised response time.
 3. **Client portal.** Approved URL and reset guidance; never request credentials; never confirm account status; structured portal-support request.
-4. **AI Maturity Index.** Approved canonical content only; never invent methodology, dimensions, range, price, or duration; offer assessment or strategy call.
+4. **AI Maturity Index.** Approved canonical content only; never invent methodology, dimensions, range, price, or duration; **defer the assessment to the business and offer a strategy call** (the bot does not run an assessment — the mini-assessment was removed from scope, 2026-07-09).
 5. **LLM selection and data security.** Explain selection factors and named partners (OpenAI, Anthropic, Google, Microsoft, AWS, Salesforce, Snowflake, OpenRouter); general security design considerations; escalate certifications, compliance, residency, contractual, or client-specific questions.
 6. **Unsupported question.** State the limitation, do not speculate, offer related approved information, offer human follow-up, record the question verbatim as unresolved.
 

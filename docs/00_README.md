@@ -1,5 +1,10 @@
 # Cadre AI Customer Support Chatbot — Planning Package (Revision 3)
 
+> **This is the design/planning package (docs `01`–`06`).** The project is now **built** (V1 + V1.5).
+> For the *shipped* system, start at the **[repository README](../README.md)** and the
+> **[Capabilities Catalog](capabilities/)** (one doc per feature). Where the plan and the build differ,
+> the catalog reflects reality. A full index of everything in this folder is at the bottom of this file.
+
 This package supersedes Revision 2. It reflects a design review focused on shipping the POC and public V1 quickly, and it makes several large architectural changes.
 
 ## Included documents
@@ -12,6 +17,17 @@ This package supersedes Revision 2. It reflects a design review focused on shipp
 6. **06_Backlog_and_Delivery_Plan.md** — epics and milestones (deploy-first sequencing)
 
 Nine documents were consolidated to six. The UX specification's normative content (flows, error states, accessibility) is folded into docs 01, 03, and 05 rather than maintained separately.
+
+## Everything else in this folder
+
+Beyond the planning package, `docs/` now holds the shipped-system and operational documentation:
+
+- **Capabilities** — [`capabilities/`](capabilities/) — one doc per feature (what / why / status / future). **Start here for the built system.**
+- **Operations** — [DEPLOY_STAGING](DEPLOY_STAGING.md) · [DEPLOY_PROD](DEPLOY_PROD.md) · [RUNBOOK_PROD](RUNBOOK_PROD.md) · [RUNBOOK_POC](RUNBOOK_POC.md) (historical).
+- **Compliance** — [PRIVACY_NOTICE](PRIVACY_NOTICE.md) (DRAFT, pending Legal) · [SECURITY_REVIEW_V1](SECURITY_REVIEW_V1.md).
+- **Quality** — [EVAL_TESTER_GUIDE](EVAL_TESTER_GUIDE.md) (the golden-set gate + dev tool).
+- **History & decisions** — [V1_EXIT_REPORT](V1_EXIT_REPORT.md) · [POC_EXIT_REPORT](POC_EXIT_REPORT.md) · [DECISIONS_LOG](DECISIONS_LOG.md) · [archive/](archive/).
+- **Content corpus** — [knowledge/](knowledge/) — the approved markdown pushed to the Vector Store.
 
 ## Summary of major changes from Revision 2
 
