@@ -74,6 +74,40 @@ async def test_missing_report_404(client: httpx.AsyncClient) -> None:
     assert resp.status_code == 404
 
 
+async def test_latest_orders_by_generated_at_not_id(
+    client: httpx.AsyncClient, insights_collection: Collection
+) -> None:
+    # A weekly report id sorts lexically above a daily id; "latest" must still be the most
+    # recently GENERATED one (the fresh daily), not the lexically-max weekly.
+    weekly = _report_doc()
+    weekly["_id"] = "weekly:2026-W27"
+    weekly["period_type"] = "weekly"
+    weekly["period_key"] = "2026-W27"
+    weekly["generated_at"] = datetime(2026, 7, 6, tzinfo=UTC)  # older
+    daily = _report_doc()
+    daily["generated_at"] = datetime(2026, 7, 9, tzinfo=UTC)  # newer
+    await insights_collection.insert_many([weekly, daily])
+
+    resp = await client.get("/api/v1/admin/insights", auth=ADMIN_AUTH)
+    assert resp.json()["report"]["period_type"] == "daily"  # the newer one, not weekly
+
+
+async def test_run_now_dedups_a_pending_refresh(
+    client: httpx.AsyncClient, jobs_collection: Collection
+) -> None:
+    first = await client.post("/api/v1/admin/insights/run", auth=ADMIN_AUTH)
+    second = await client.post("/api/v1/admin/insights/run", auth=ADMIN_AUTH)
+    assert first.status_code == 200 and second.status_code == 200
+    assert "already in progress" in second.json()["detail"]
+    # The second click did NOT enqueue a duplicate refresh job.
+    assert (
+        await jobs_collection.count_documents(
+            {"type": "generate_insights", "resource_id": "refresh"}
+        )
+        == 1
+    )
+
+
 async def test_run_now_is_admin_only_and_audited(
     client: httpx.AsyncClient, jobs_collection: Collection, audit_collection: Collection
 ) -> None:

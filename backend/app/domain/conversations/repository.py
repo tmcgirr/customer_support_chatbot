@@ -386,6 +386,16 @@ class ConversationRepository:
         )
         return [Conversation.model_validate(doc) for doc in docs]
 
+    async def count_ended_in_window(self, start: datetime, end: datetime) -> int:
+        """Total ended conversations in [start, end) — so a report can show the true period
+        size even when only a capped slice was analyzed (truncation signal)."""
+        return await self._collection.count_documents(
+            {
+                "status": {"$in": list(self._ENDED_STATUSES)},
+                "last_activity_at": {"$gte": start, "$lt": end},
+            }
+        )
+
     # --- Read-only admin queries ---
 
     async def total(self) -> int:

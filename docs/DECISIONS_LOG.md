@@ -612,3 +612,35 @@ Choices made during implementation that the planning docs did not fully specify
   (batched, errors normalized, `from None`), `FakeAdapter.embed`, and config
   (`insights_*`: embed model, similarity threshold 0.82, min cluster size 3, window 7d, batch cap
   300, 40s budget). Pipeline (Slice B), dashboard (Slice C), review+deploy (Slice D) next.
+
+## V1.5 — Conversation Insights: pipeline/dashboard + review fixes (Slices B-D) (2026-07-09)
+
+- **Shipped (Slice B/C):** the pipeline (extract heuristic question → batched embed → in-memory
+  cluster → per-cluster LLM {label, coverage, proposed Q/A} → daily-only auto-draft into the
+  canonical approve gate → LLM summary → dated report), calendar periods (daily/weekly/monthly,
+  idempotent per `period_type:period_key`, overlap by design), `generate_insights` job (scheduled
+  + manual `POST /admin/insights/run`), and the admin **Insights** tab (report picker, coverage
+  badges, proposed-FAQ approve, Run-now).
+- **Adversarial-review fixes (11 confirmed).**
+  1. (MED×3) `latest()`/`list_recent()` sorted by the composite `_id` (period-type prefix:
+     weekly>monthly>daily lexically), so the "Latest" view showed a stale weekly over a fresh
+     daily and dailies fell off the picker. Now sort by `generated_at`.
+  2. (MED) Timeout: the shared budget was checked only BETWEEN clusters, and embed/summary ran
+     unbudgeted → a run could exceed the 50s worker timeout → dead-letter. Now each embed/classify
+     is `asyncio.wait_for`-capped (15s), the budget is 30s, and the summary is skipped when over
+     budget — so a whole daily+weekly+monthly run stays under the timeout.
+  3. (MED) Partial daily: a manual run before UTC midnight wrote `daily:<today>`, then the
+     scheduled run SKIPPED it (exists), leaving the last-complete daily permanently missing the
+     day's tail. `ensure_latest` now regenerates when `generated_at < period.end`.
+  4. (MED×2) Auto-draft: audited AFTER the upsert, and the dedup intent hashed the
+     NONDETERMINISTIC LLM label → duplicate drafts on retry/manual re-run. Now audit BEFORE the
+     upsert (convention) and the intent hashes the STABLE representative question.
+  5. (MED) Batch cap silently truncated a high-volume period to the oldest 300 with no signal.
+     Now the report carries `conversations_in_period` (true total; > analyzed ⇒ sampled), logs a
+     warning, and the UI shows "N of M (sampled)".
+  6. (LOW) Run-now had no dedup → duplicate jobs/spend. Now guarded by
+     `has_active_for_resource(..., "refresh")`.
+  7. (LOW×2) UI: Run-now now disables during its own request; Approve-FAQ shows "Approved ✓" and
+     hides the button after success (no confusing re-click 400).
+- **Verified:** 336 backend + 47 frontend tests (ordering, partial-regen, stable-intent, dedup,
+  timeout/truncation, approve/run-now UI). ruff + mypy clean.

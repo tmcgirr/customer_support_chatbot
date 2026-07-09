@@ -171,13 +171,16 @@ async def test_generate_insights_clusters_and_auto_drafts(db: Database) -> None:
     report = await service.generate(period, now=now)
 
     assert report is not None
-    assert report.conversations_analyzed == 3
+    assert report.conversations_analyzed == 3 and report.conversations_in_period == 3
     assert len(report.clusters) == 1
     cluster = report.clusters[0]
     assert cluster.size == 3 and cluster.coverage == "missing"
     assert cluster.proposed is not None
     draft_intent = cluster.proposed.canonical_draft_intent
-    assert draft_intent is not None and draft_intent.startswith("insight_")
+    # The draft intent is derived from the STABLE representative question, not the LLM label.
+    from app.domain.insights.service import _proposed_intent
+
+    assert draft_intent == _proposed_intent(question)
     # A canonical DRAFT was created (never served until a human approves) + audited.
     draft = await canonical.get(draft_intent)
     assert draft is not None and draft.status == "draft"
@@ -187,6 +190,51 @@ async def test_generate_insights_clusters_and_auto_drafts(db: Database) -> None:
     await service.generate(period, now=now)
     assert await db["insights_reports"].count_documents({}) == 1
     assert await db["canonical_answers"].count_documents({"intent": draft_intent}) == 1
+
+
+async def test_ensure_latest_regenerates_a_partial_daily(db: Database) -> None:
+    # A manual run mid-day writes daily:<today> before the day closes; after the boundary
+    # the scheduled ensure_latest must REGENERATE it (else the last-complete daily is a
+    # permanent partial snapshot). Detected via generated_at < period.end.
+    from app.core.config import get_settings
+    from app.domain.audit.repository import AuditRepository
+    from app.domain.canonical.repository import CanonicalAnswerRepository
+    from app.domain.insights.models import InsightsReport
+    from app.domain.insights.periods import last_complete_period
+    from app.domain.insights.repository import InsightsReportRepository
+    from app.domain.insights.service import InsightsService
+    from tests.fakes import FakeAdapter
+
+    now = datetime.now(UTC)
+    period = last_complete_period("daily", now)
+    reports = InsightsReportRepository(db["insights_reports"])
+    await reports.record(
+        InsightsReport(
+            id=period.report_id,
+            period_type="daily",
+            period_key=period.key,
+            generated_at=period.start,  # BEFORE period.end → a partial mid-period snapshot
+            window_start=period.start,
+            window_end=period.end,
+            conversations_analyzed=0,
+            conversations_in_period=0,
+            clusters=[],
+            summary="partial",
+        )
+    )
+    service = InsightsService(
+        ConversationRepository(db["conversations"]),
+        CanonicalAnswerRepository(db["canonical_answers"]),
+        AuditRepository(db["audit"]),
+        reports,
+        FakeAdapter(),
+        get_settings(),
+    )
+    generated = await service.ensure_latest(now)
+
+    assert period.report_id in generated  # regenerated, not skipped
+    updated = await reports.get(period.report_id)
+    assert updated is not None and updated.generated_at >= period.end  # now a full snapshot
 
 
 async def test_generate_insights_weekly_does_not_auto_draft(db: Database) -> None:

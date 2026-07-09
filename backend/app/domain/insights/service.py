@@ -9,6 +9,7 @@ summary), not conversation count. Provider-isolated (adapter only), no PII in lo
 model is read-only — it never publishes; a human approves every proposed FAQ (invariant #8, #12).
 """
 
+import asyncio
 import hashlib
 import json
 import time
@@ -105,10 +106,13 @@ def _parse_analysis(raw: str, *, fallback_label: str) -> _Analysis:
     return _Analysis(label=label, coverage=coverage, proposed_question=pq, proposed_answer=pa)  # type: ignore[arg-type]
 
 
-def _proposed_intent(label: str) -> str:
-    """Deterministic canonical intent for a themed proposal, so re-running a period (or a
-    recurring theme with the same label) upserts ONE draft rather than duplicating."""
-    norm = " ".join(label.lower().split())
+def _proposed_intent(representative_question: str) -> str:
+    """Deterministic canonical intent for a themed proposal, derived from the cluster's
+    REPRESENTATIVE QUESTION (stable member data), NOT the nondeterministic LLM label — so
+    re-running a period (retry, or a manual re-run over a grown window) upserts ONE draft
+    rather than spawning duplicates. The ``insight_`` prefix can never collide with a real
+    seeded canonical intent."""
+    norm = " ".join(representative_question.lower().split())
     return f"insight_{hashlib.sha1(norm.encode()).hexdigest()[:12]}"
 
 
@@ -152,7 +156,11 @@ class InsightsService:
             if time.monotonic() >= deadline:
                 break
             period = last_complete_period(period_type, now)  # type: ignore[arg-type]
-            if await self._reports.get(period.report_id) is None:
+            existing = await self._reports.get(period.report_id)
+            # Regenerate if missing OR if it's a PARTIAL snapshot a manual run wrote before
+            # the period actually closed (generated_at < period.end) — otherwise the
+            # authoritative last-complete report would permanently miss the period's tail.
+            if existing is None or existing.generated_at < period.end:
                 report = await self.generate(period, now=now, deadline=deadline)
                 if report is not None:
                     generated.append(period.report_id)
@@ -178,9 +186,22 @@ class InsightsService:
         """Build (and store) the report for one period. ``deadline`` (a shared monotonic
         cap for the whole job) bounds the per-cluster LLM loop. Returns None only if
         embeddings are unavailable (retry next run); an empty period still writes a report."""
+        limit = self._settings.insights_batch_limit
         conversations = await self._conversations.list_ended_in_window(
-            period.start, period.end, limit=self._settings.insights_batch_limit
+            period.start, period.end, limit=limit
         )
+        analyzed = len(conversations)
+        # Only the analyzed slice is capped; report the true period total so a high-volume
+        # period can't silently look like exactly `limit` conversations (misleading at scale).
+        if analyzed >= limit:
+            in_period = await self._conversations.count_ended_in_window(period.start, period.end)
+            logger.warning(
+                "insights.period_truncated",
+                extra={"context": {"period": period.report_id, "analyzed": analyzed}},
+            )
+        else:
+            in_period = analyzed
+
         pairs: list[tuple[Conversation, str]] = []
         for convo in conversations:
             question = extract_question(convo)
@@ -188,12 +209,15 @@ class InsightsService:
                 pairs.append((convo, question))
 
         if not pairs:
-            return await self._store_empty(period, now, len(conversations))
+            return await self._store_empty(period, now, analyzed, in_period)
 
         questions = [q for _, q in pairs]
         try:
-            embeddings = await self._adapter.embed(questions)
-        except AdapterError:
+            embeddings = await asyncio.wait_for(
+                self._adapter.embed(questions),
+                timeout=self._settings.insights_call_timeout_seconds,
+            )
+        except (AdapterError, TimeoutError):
             logger.warning(
                 "insights.embed_unavailable", extra={"context": {"period": period.report_id}}
             )
@@ -239,22 +263,14 @@ class InsightsService:
             if time.monotonic() >= deadline:
                 break
 
-        summary = await self._summarize(period, len(conversations), clusters)
-        report = InsightsReport(
-            id=period.report_id,
-            period_type=period.type,
-            period_key=period.key,
-            generated_at=now,
-            window_start=period.start,
-            window_end=period.end,
-            conversations_analyzed=len(conversations),
-            clusters=clusters,
-            summary=summary,
-        )
-        await self._reports.record(report)
-        return report
+        if not clusters:
+            summary = "No notable question clusters in this period."
+        elif time.monotonic() >= deadline:
+            # Out of budget — skip the model summary rather than risk the worker timeout.
+            summary = "Summary skipped (time budget reached); the cluster data below is complete."
+        else:
+            summary = await self._summarize(period, in_period, clusters)
 
-    async def _store_empty(self, period: Period, now: datetime, analyzed: int) -> InsightsReport:
         report = InsightsReport(
             id=period.report_id,
             period_type=period.type,
@@ -263,6 +279,25 @@ class InsightsService:
             window_start=period.start,
             window_end=period.end,
             conversations_analyzed=analyzed,
+            conversations_in_period=in_period,
+            clusters=clusters,
+            summary=summary,
+        )
+        await self._reports.record(report)
+        return report
+
+    async def _store_empty(
+        self, period: Period, now: datetime, analyzed: int, in_period: int
+    ) -> InsightsReport:
+        report = InsightsReport(
+            id=period.report_id,
+            period_type=period.type,
+            period_key=period.key,
+            generated_at=now,
+            window_start=period.start,
+            window_end=period.end,
+            conversations_analyzed=analyzed,
+            conversations_in_period=in_period,
             clusters=[],
             summary="No conversations with questions to analyze in this period.",
         )
@@ -282,8 +317,11 @@ class InsightsService:
             f"Cluster questions:\n" + "\n".join(f"- {q}" for q in samples)
         )
         try:
-            raw = await self._adapter.classify(instructions=_ANALYZE_INSTRUCTIONS, text=prompt)
-        except AdapterError:
+            raw = await asyncio.wait_for(
+                self._adapter.classify(instructions=_ANALYZE_INSTRUCTIONS, text=prompt),
+                timeout=self._settings.insights_call_timeout_seconds,
+            )
+        except (AdapterError, TimeoutError):
             return _Analysis(
                 label=samples[0][:100], coverage="unclear", proposed_question="", proposed_answer=""
             )
@@ -302,10 +340,12 @@ class InsightsService:
             f"Notable clusters:\n{listing}"
         )
         try:
-            return (
-                await self._adapter.classify(instructions=_SUMMARY_INSTRUCTIONS, text=prompt)
-            ).strip()
-        except AdapterError:
+            raw = await asyncio.wait_for(
+                self._adapter.classify(instructions=_SUMMARY_INSTRUCTIONS, text=prompt),
+                timeout=self._settings.insights_call_timeout_seconds,
+            )
+            return raw.strip()
+        except (AdapterError, TimeoutError):
             return "Insights summary is temporarily unavailable; cluster data below is complete."
 
     async def _propose(
@@ -316,7 +356,9 @@ class InsightsService:
         if not create_draft:
             return ProposedAnswer(question=question, answer=answer, canonical_draft_intent=None)
 
-        intent = _proposed_intent(analysis.label)
+        # Deterministic key from the STABLE representative question (not the LLM label), so
+        # retries / manual re-runs of the same theme dedupe to one draft.
+        intent = _proposed_intent(representative)
         existing = await self._canonical.get(intent)
         if existing is not None:
             # Already proposed (draft) or handled (approved) — never re-create or overwrite
@@ -326,6 +368,16 @@ class InsightsService:
                 question=question, answer=answer, canonical_draft_intent=draft_intent
             )
 
+        # Audit BEFORE creating the draft (codebase convention): a crash between the two
+        # must never leave an un-audited auto-drafted canonical (invariant #12).
+        await self._audit.record(
+            actor="system:insights",
+            role="system",
+            action="propose_faq",
+            target_type="canonical_answer",
+            target_id=intent,
+            reason="auto-drafted from a common uncovered question cluster",
+        )
         await self._canonical.upsert(
             CanonicalAnswer(
                 id=ids.canonical_answer_id(),
@@ -337,13 +389,5 @@ class InsightsService:
                 effective_date=now,
                 review_date=now,
             )
-        )
-        await self._audit.record(
-            actor="system:insights",
-            role="system",
-            action="propose_faq",
-            target_type="canonical_answer",
-            target_id=intent,
-            reason="auto-drafted from a common uncovered question cluster",
         )
         return ProposedAnswer(question=question, answer=answer, canonical_draft_intent=intent)

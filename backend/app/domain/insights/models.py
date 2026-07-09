@@ -54,6 +54,7 @@ class InsightsReport(BaseModel):
     generated_at: datetime
     window_start: datetime
     window_end: datetime
-    conversations_analyzed: int
+    conversations_analyzed: int  # the (capped) slice actually clustered
+    conversations_in_period: int = 0  # true total in the window (> analyzed ⇒ truncated)
     clusters: list[QuestionCluster]
     summary: str  # LLM narrative: demand signals, gaps, roadmap hints

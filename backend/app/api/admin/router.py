@@ -190,6 +190,7 @@ class InsightsReportResponse(BaseModel):
     window_start: datetime
     window_end: datetime
     conversations_analyzed: int
+    conversations_in_period: int  # > analyzed ⇒ only a capped sample was clustered
     clusters: list[InsightsCluster]
     summary: str
 
@@ -864,6 +865,7 @@ def _to_report_response(report: InsightsReport) -> InsightsReportResponse:
         window_start=report.window_start,
         window_end=report.window_end,
         conversations_analyzed=report.conversations_analyzed,
+        conversations_in_period=report.conversations_in_period,
         summary=report.summary,
         clusters=[
             InsightsCluster(
@@ -928,7 +930,13 @@ async def run_insights_now(
 ) -> ActionResponse:
     """Queue an on-demand insights run (regenerates the current in-progress periods).
     Admin-only + audited; the worker does the work asynchronously (spends model $)."""
-    await jobs.enqueue("generate_insights", resource_id="refresh")
+    # Dedup rapid/duplicate clicks: only enqueue when no manual refresh is already pending
+    # or running (matched by the "refresh" resource id, so a scheduled run doesn't block it).
+    if not await jobs.has_active_for_resource("generate_insights", "refresh"):
+        await jobs.enqueue("generate_insights", resource_id="refresh")
+        detail = "Insights run queued."
+    else:
+        detail = "An insights run is already in progress."
     await audit.record(
         actor=admin.username,
         role=admin.role,
@@ -937,7 +945,7 @@ async def run_insights_now(
         target_id="refresh",
         reason="manual insights run",
     )
-    return ActionResponse(ok=True, detail="Insights run queued.")
+    return ActionResponse(ok=True, detail=detail)
 
 
 @router.get("/privacy-requests", response_model=PrivacyListResponse)

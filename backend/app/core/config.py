@@ -138,9 +138,12 @@ class Settings(BaseSettings):
     # A cluster this size is "common" enough to surface + propose a unified FAQ for.
     insights_min_cluster_size: int = 3
     insights_batch_limit: int = 300  # max conversations analyzed per run
-    # Wall-clock cap for the run's LLM steps (naming/coverage/proposal per cluster +
-    # summary) — kept under worker_job_timeout_seconds so the job can't time out.
-    insights_time_budget_seconds: float = 40.0
+    # Shared wall-clock cap for the WHOLE run's LLM steps across all horizons; with the
+    # per-call cap below (one straddling call max) this stays under worker_job_timeout_seconds.
+    insights_time_budget_seconds: float = 30.0
+    # Hard cap on any single embed/classify call, so one hung call can't push the job past
+    # the worker timeout (a timeout is treated like a model outage: skip/retry).
+    insights_call_timeout_seconds: float = 15.0
     # Which report horizons the scheduled run maintains (all share one code path).
     insights_enable_daily: bool = True
     insights_enable_weekly: bool = True

@@ -195,6 +195,8 @@ export interface InsightsReport {
   window_start: string;
   window_end: string;
   conversations_analyzed: number;
+  /** True total in the period; if greater than analyzed, only a capped sample was clustered. */
+  conversations_in_period: number;
   clusters: InsightsCluster[];
   summary: string;
 }

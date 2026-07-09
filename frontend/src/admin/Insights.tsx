@@ -15,11 +15,13 @@ function ClusterCard({
   cluster,
   isAdmin,
   busy,
+  approved,
   onApprove,
 }: {
   cluster: InsightsCluster;
   isAdmin: boolean;
   busy: boolean;
+  approved: boolean;
   onApprove: (intent: string) => void;
 }) {
   const draftIntent = cluster.proposed_canonical_intent;
@@ -41,16 +43,20 @@ function ClusterCard({
             <strong>Proposed FAQ:</strong> {cluster.proposed_question}
           </p>
           {cluster.proposed_answer && <p className="admin-content">{cluster.proposed_answer}</p>}
-          {isAdmin && draftIntent && (
-            <button
-              type="button"
-              className="admin-link"
-              disabled={busy}
-              onClick={() => onApprove(draftIntent)}
-            >
-              Approve FAQ
-            </button>
-          )}
+          {isAdmin &&
+            draftIntent &&
+            (approved ? (
+              <p className="admin-muted">Approved ✓ — now served.</p>
+            ) : (
+              <button
+                type="button"
+                className="admin-link"
+                disabled={busy}
+                onClick={() => onApprove(draftIntent)}
+              >
+                Approve FAQ
+              </button>
+            ))}
         </div>
       )}
     </div>
@@ -68,30 +74,29 @@ export default function Insights({
 }) {
   const isAdmin = role === "admin";
   const [selectedId, setSelectedId] = useState("");
-  const [reloadNonce, setReloadNonce] = useState(0);
   const [runMsg, setRunMsg] = useState<string | null>(null);
+  const [running, setRunning] = useState(false);
+  const [approvedIntents, setApprovedIntents] = useState<Set<string>>(new Set());
   const { error: actionError, busy, run } = useAdminAction(onAuthError);
 
-  const { data: listData } = useAdminQuery(
-    () => client.listInsightsReports(),
-    onAuthError,
-    [reloadNonce],
-  );
+  const { data: listData } = useAdminQuery(() => client.listInsightsReports(), onAuthError, []);
   const { data: reportData, loading, error } = useAdminQuery(
     () =>
       selectedId
         ? client.getInsightsReport(selectedId).then((report) => ({ report }))
         : client.getLatestInsights(),
     onAuthError,
-    [selectedId, reloadNonce],
+    [selectedId],
   );
   const report = reportData?.report ?? null;
 
   async function handleRun() {
+    if (running) return; // guard double-clicks while the request is in flight
     setRunMsg(null);
+    setRunning(true);
     try {
-      await client.runInsights();
-      setRunMsg("Insights run queued — reports refresh shortly. Reload in a minute.");
+      const result = await client.runInsights();
+      setRunMsg(`${result.detail} Reports refresh shortly — reload in a minute.`);
     } catch (err: unknown) {
       if (err instanceof AdminAuthError) {
         onAuthError();
@@ -100,6 +105,8 @@ export default function Insights({
       } else {
         setRunMsg(err instanceof Error ? err.message : "Run failed.");
       }
+    } finally {
+      setRunning(false);
     }
   }
 
@@ -107,7 +114,7 @@ export default function Insights({
     run(
       "Reason for approving this proposed FAQ (audited). It becomes searchable once approved:",
       (reason) => client.approveCanonical(intent, reason),
-      () => setReloadNonce((n) => n + 1),
+      () => setApprovedIntents((prev) => new Set(prev).add(intent)),
     );
   }
 
@@ -126,8 +133,8 @@ export default function Insights({
           </select>
         </label>
         {isAdmin && (
-          <button type="button" className="admin-signout" disabled={busy} onClick={handleRun}>
-            Run now
+          <button type="button" className="admin-signout" disabled={running} onClick={handleRun}>
+            {running ? "Queuing…" : "Run now"}
           </button>
         )}
       </div>
@@ -145,7 +152,10 @@ export default function Insights({
       {report && (
         <div>
           <p className="admin-muted">
-            {report.period_type} {report.period_key} · {report.conversations_analyzed} conversations
+            {report.period_type} {report.period_key} ·{" "}
+            {report.conversations_in_period > report.conversations_analyzed
+              ? `${report.conversations_analyzed} of ${report.conversations_in_period} conversations (sampled)`
+              : `${report.conversations_analyzed} conversations`}{" "}
             · generated {report.generated_at}
           </p>
           <div className="admin-card">
@@ -162,6 +172,11 @@ export default function Insights({
                   cluster={c}
                   isAdmin={isAdmin}
                   busy={busy}
+                  approved={
+                    c.proposed_canonical_intent
+                      ? approvedIntents.has(c.proposed_canonical_intent)
+                      : false
+                  }
                   onApprove={handleApprove}
                 />
               ))}

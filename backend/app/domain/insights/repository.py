@@ -30,9 +30,16 @@ class InsightsReportRepository:
         return InsightsReport.model_validate(doc) if doc is not None else None
 
     async def latest(self) -> InsightsReport | None:
-        docs = await self._collection.find().sort("_id", -1).limit(1).to_list(length=1)
+        # By generated_at, NOT _id — the composite "<type>:<key>" id sorts by period-type
+        # prefix (weekly>monthly>daily), which would surface a stale weekly over a fresh daily.
+        docs = await self._collection.find().sort("generated_at", -1).limit(1).to_list(length=1)
         return InsightsReport.model_validate(docs[0]) if docs else None
 
     async def list_recent(self, limit: int = 30) -> list[InsightsReport]:
-        docs = await self._collection.find().sort("_id", -1).limit(limit).to_list(length=limit)
+        docs = (
+            await self._collection.find()
+            .sort("generated_at", -1)
+            .limit(limit)
+            .to_list(length=limit)
+        )
         return [InsightsReport.model_validate(doc) for doc in docs]

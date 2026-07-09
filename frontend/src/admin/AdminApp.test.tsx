@@ -120,6 +120,7 @@ const INSIGHTS_REPORT = {
   window_start: "2026-07-08T00:00:00Z",
   window_end: "2026-07-09T00:00:00Z",
   conversations_analyzed: 12,
+  conversations_in_period: 12,
   summary: "New-model support is the biggest gap this period.",
   clusters: [
     {
