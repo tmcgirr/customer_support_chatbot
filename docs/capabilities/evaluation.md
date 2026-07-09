@@ -1,11 +1,11 @@
 # Evaluation — the golden-set gate & dev tool
 
-> **In one line:** A fixed set of 37 "golden" conversations run through the real chatbot to prove — before any prompt/model/content change ships — that answers, safety, and routing still behave exactly as designed.
+> **In one line:** A fixed set of 39 "golden" conversations run through the real chatbot to prove — before any prompt/model/**provider**/content change ships — that answers, safety, and routing still behave exactly as designed.
 
 **Status:** Gate/CI (release gate) + Dev-only tooling  ·  **Introduced:** V1 gate; V1.5 tool
 
 ## What it is
-The evaluation harness lives in `backend/eval/`. It replays 37 curated test conversations (the "golden set") against the **real** orchestrator and the read-only tools the bot actually uses in production, then checks each response against a small set of assertions. It plays two roles: a **release gate** that blocks a change from shipping if any case fails, and a **standalone developer tool** for comparing different models/prompts and producing shareable reports. It is deliberately not part of the chatbot or the admin app — it never runs in the request path.
+The evaluation harness lives in `backend/eval/`. It replays 39 curated test conversations (the "golden set") against the **real** orchestrator and the read-only tools the bot actually uses in production, then checks each response against a small set of assertions. It plays two roles: a **release gate** that blocks a change from shipping if any case fails, and a **standalone developer tool** for comparing different providers/models/prompts and producing shareable reports. It is deliberately not part of the chatbot or the admin app — it never runs in the request path.
 
 ## Why it exists
 The bot's most important behaviors are the things it must *never* do: quote a price, claim a certification, confirm who a client is, promise an SLA, or break character under a prompt-injection attempt (see [canonical answers](canonical-answers.md) and CLAUDE.md content rules). Those behaviors depend on the prompt, the model, and the canonical/knowledge content — all of which can regress silently when edited. The golden set turns those rules into an automated, repeatable check so a regression is caught before promotion, not by a customer. It is the concrete mechanism behind the invariant that **prompts and model config are versioned and must pass the gate on the target config before promotion** ([ADR-018](../03_Architecture_and_Decision_Records.md), doc 03; spec in [doc 05 §8](../05_Conversation_and_Content_Specification.md)).
@@ -19,9 +19,9 @@ The bot's most important behaviors are the things it must *never* do: quote a pr
 
 ## Key files
 - `backend/eval/run.py` — the runner + CLI: loads cases, builds the real orchestrator, scores each case, wires the gate exit code, emits reports.
-- `backend/eval/golden_set.yaml` — the authoritative **37** cases (pricing, security/compliance, client-confirmation, case studies, SLAs, AI Maturity Index, portal, identity/AI-disclosure, prompt-injection, company/service/industry, booking, escalation, off-topic).
+- `backend/eval/golden_set.yaml` — the authoritative **39** cases (pricing, security/compliance, client-confirmation, case studies, SLAs, AI Maturity Index, portal, identity/AI-disclosure, prompt-injection, company/service/industry, booking, escalation, off-topic).
 - `backend/eval/assertions.py` — the six pure assertion evaluators + the safety phrase lists.
-- `backend/eval/config.py` — `EvalConfig` (model, fallback model, prompt version); `current_config()` is the gate baseline pulled from settings; `load_configs()` reads a compare file.
+- `backend/eval/config.py` — `EvalConfig` (**provider**, model, fallback model, prompt version); `current_config()` is the gate baseline pulled from settings (whichever provider is the env default); `load_configs()` reads a compare file.
 - `backend/eval/results.py` — `CaseResult`/`RunResult` scoring, per-category breakdown, `rank()`.
 - `backend/eval/report.py` — self-contained HTML report (score card, per-case table, ranking + case×config diff matrix).
 - `backend/eval/pdf.py` — downloadable PDF report via fpdf2 (no system deps).
@@ -34,13 +34,13 @@ No HTTP endpoints, jobs, or admin screens — it is a command-line tool run by e
 - `uv run python -m eval.run --fake` — plumbing adapter that spends no API budget; proves the harness drives every case and always exits 0.
 - `--show` / `--filter <substr>` — print each case's response + routed intent / run a subset.
 - `--report out.html` · `--pdf out.pdf` · `--json out.json` — shareable/archivable artifacts (writing one can never change the gate's exit code).
-- `--model M` / `--prompt-version V` — one-off override run.
-- `--compare configs.yaml [--report ...]` — score several named configs, rank them, and render a case×config diff matrix showing exactly which cases a change fixed or broke.
+- `--model M` / `--prompt-version V` / `--provider {openai|anthropic}` — one-off override run (a bare `--provider` targets that provider's configured model).
+- `--compare configs.yaml [--report ...]` — score several named configs, rank them, and render a case×config diff matrix showing exactly which cases a change fixed or broke. Each config carries a `provider`, so this is also the **cross-provider A-B**: gate a Claude config on the same golden set before switching the admin toggle to it (invariant #15).
 
 ## Status & limitations
 - **Live as a gate.** CI runs `--fake` on every push to prove the harness works, and a separate manual-dispatch `golden-eval` job runs the real gate against the target environment's OpenAI project/store (it spends API budget, so it is not run on every commit). See `.github/workflows/ci.yml`.
 - **`--compare` is intentionally not gated** — comparison is exploratory dev tooling and always exits 0.
-- The gate's strength is bounded by coverage: it is 37 curated cases, not exhaustive. New risky behaviors need a new golden case to be protected.
+- The gate's strength is bounded by coverage: it is 39 curated cases, not exhaustive. New risky behaviors need a new golden case to be protected.
 - Fuzzy safety assertions (`must_not_confirm_client`, `must_not_break_character`) use maintained phrase lists; a novel unsafe phrasing not on the list could slip a case unless pinned via `must_not_contain`.
 - Reports/PDF/JSON are developer surfaces only — no product or admin exposure, by design.
 

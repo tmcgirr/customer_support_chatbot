@@ -745,3 +745,90 @@ Choices made during implementation that the planning docs did not fully specify
   edits. (The earlier local web-UI experiment was reverted as an unneeded second leg.)
 - **Verified:** 366 backend tests (PDF valid/comparison/unicode/empty) + a live CLI smoke that wrote
   a valid %PDF + JSON. ruff + mypy clean.
+
+## Admin console — UI redesign & session
+
+- **2026-07-09 · Admin session persists in `sessionStorage` (per-tab), not memory-only.**
+  The admin SPA previously held Basic-auth creds in React memory only, so any browser
+  refresh forced a re-login (poor operability). Decision (user-approved): mirror creds to
+  `sessionStorage` under `cadre_admin_creds` — survives a refresh, auto-cleared when the tab
+  closes and on sign-out, and re-verified via `/me` on load (stale creds are dropped). This is
+  a deliberate, scoped relaxation of "creds in memory only": still NEVER `localStorage`, still
+  per-tab, Basic-auth creds only (no PII, no tokens with broader scope). Trust boundary is
+  unchanged — the model stays read-only; admin remains role-gated + audited server-side.
+- **2026-07-09 · Admin panels refresh via view remount, not polling.** Re-selecting a sidebar
+  item, the new topbar Refresh button, and regaining browser-tab focus (throttled 3s) each bump
+  a nonce that remounts the active view → re-runs its fetch. No background polling / websockets
+  (kept simple; avoids request storms). Operators never need a full browser refresh.
+
+## Multi-provider model support — Anthropic Claude, admin-switchable (2026-07-09)
+
+- **Second provider behind the same boundary.** Added `AnthropicMessagesAdapter` alongside
+  `OpenAIResponsesAdapter` in `app/agent/adapter.py`, both implementing the `ModelAdapter`
+  protocol. Provider isolation (invariant #4) holds — Anthropic types/IDs/errors never leave the
+  adapter; the orchestrator/worker/analytics see only the normalized `StreamEvent`/`Usage`/
+  `AdapterError`. Streaming maps the Anthropic Messages SSE events; a `_to_anthropic_messages`
+  helper folds the flat turn transcript into Anthropic's message/content-block shape (tool_use on
+  assistant turns, tool_result on user turns). Default model `claude-haiku-4-5` — the low-cost
+  Claude tier (~$1/$5 per 1M vs Opus 4.8's ~$5/$25), chosen for this public chatbot; thinking
+  **off** (concise, tool-driven support answers under the shared 1500-token output cap).
+- **Runtime switch, not env-only.** The user asked to switch "in the admin portal if wanted", so
+  the active provider is persisted in a new single-doc `app_settings` collection and resolved
+  per-turn via a TTL-cached `ProviderResolver` — the API and the separate worker both pick up a
+  switch within seconds, no restart. `POST /api/v1/admin/model-provider` is **admin-role only,
+  reason-required, audited** (`switch_model_provider`), and refuses any provider whose key isn't
+  configured. The startup default is `MODEL_PROVIDER` (env); only key-configured providers are
+  built (the default always is, so the app still boots and degrades to MODEL_UNAVAILABLE in dev).
+- **Invariant #14/#15 tension, accepted with mitigations.** Model config is meant to be *promoted*
+  with the golden set passing on the target config, not edited live in prod. A live toggle bends
+  that. Mitigations: switch is admin-only + audited + limited to configured providers; the eval
+  runner gained `--provider anthropic` (and a `provider:` key in compare YAML) so the golden set
+  can gate the Claude config before a switch; docs/env examples say to run the gate first. We did
+  NOT hard-block the toggle on a gate result (that's an ops policy, and would over-couple a runtime
+  control to the offline eval) — flagged here instead.
+- **Embeddings via OpenAI (Anthropic has none).** The Claude adapter's `embed()` delegates to an
+  internal OpenAI embeddings client so insights clustering keeps working under Claude; it fails
+  closed (`AdapterError`) if no OpenAI key is set. `OPENAI_API_KEY` therefore stays required even
+  when Claude answers chat. Documented in config + env examples.
+- **Verified:** backend `ruff`/`mypy` clean; new unit tests for the adapter (fake Anthropic client),
+  settings repo, resolver, and the admin endpoints; frontend build + 85 tests green (new Model
+  provider panel + admin tab). Golden gate against the live Anthropic API is run intentionally
+  (spends $), not in CI — unit tests with fakes cover the plumbing.
+
+## Admin console — action confirmation UX
+
+- **2026-07-09 · Privileged-action reason is optional to type (default auto-recorded).**
+  The native `window.prompt` for the audit reason is replaced by a clean confirmation modal
+  (`ReasonDialog`). Decision (user-approved): an admin can one-click Confirm without typing a
+  reason — a descriptive default (e.g. "Approved via admin console", "Revealed contact details
+  via admin console") is recorded instead. This relaxes the "PII reveal/export **requires a
+  (typed) reason**" expectation of invariant #12 for admin-console usability. The audit trail is
+  UNCHANGED: every action still writes an append-only audit record, and the `reason` field is
+  still always non-empty (the backend `ReasonBody` min_length=1 is unchanged) — it's just the
+  default rather than a hand-typed note when left blank. All these actions remain admin-only
+  (viewers cannot perform them) and role-gated + audited server-side.
+
+## LLM usage & cost visibility (2026-07-09)
+
+- **Why:** a public chatbot on paid LLMs needs spend visibility so it can't quietly run up a
+  bill. Added an admin Governance "Usage & cost" panel: tokens + $ per provider / model /
+  category (chat, testing, summary, insights, labeling, embeddings), active model + masked API
+  key per provider, and a month-to-date budget with an alert.
+- **What was already in the DB:** chat turns already persist per-assistant-message `usage` +
+  `model` on conversations, and eval conversations carry `entry_page="eval"` — so **chat +
+  testing are derived** from existing data (a `ConversationRepository.usage_by_model` aggregation),
+  no chat-path change. Only the worker's `classify`/`embed` calls were unrecorded, so those get a
+  new `llm_usage` rollup written via an adapter `on_usage` hook (keeps the adapter free of Mongo
+  types — provider isolation intact, invariant #4). Count-only, no PII → outside the retention sweep.
+- **Pricing** is a code-reviewed table (`app/domain/usage/pricing.py`) with an `LLM_PRICING` env
+  override; provider is inferred from the model id (a `/` marks an OpenRouter `vendor/model` id).
+  **Anthropic rates are authoritative; OpenAI/OpenRouter rates ship as PLACEHOLDERS** (clearly
+  TODO'd) — cost shows out of the box, and unpriced models are surfaced in the panel, not hidden,
+  so operators know to set real rates. (User chose "seed placeholders" over "leave unpriced".)
+- **API key display:** last-4 only, **admins only** (viewers get `null`); the full key is never
+  sent to the browser or logged (invariant #5). (User chose "last 4 only".)
+- **Budget** (`LLM_MONTHLY_BUDGET_USD`, 0 = disabled) drives a budget bar + an `llm_budget_exceeded`
+  warning in the shared `evaluate_alerts` (so it shows on `/monitoring` + the worker's alert log);
+  the two month-to-date aggregations are skipped when no budget is set, keeping the scrape cheap.
+- **Coexists with the parallel OpenRouter work** — the panel treats openrouter as a third provider,
+  attributes its `vendor/model` usage correctly, and its rates are override-configurable.

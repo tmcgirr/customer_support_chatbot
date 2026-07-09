@@ -2,43 +2,53 @@
  *
  * The widget renders inside a TRANSPARENT iframe; only the launcher and the panel
  * are visible, so the page background must stay transparent to let the host show
- * through. Look: neutral dark-gray theme (ChatGPT-style) — near-neutral gray
- * surfaces, off-white text, a single indigo send/focus accent. Calm, roomy;
- * system fonts throughout. */
+ * through. Look: Cadre website theme — warm cream surfaces, near-black text, a
+ * coral-red accent (links/labels/focus) and a black "CTA" primary (send button,
+ * launcher). Single light theme. Calm, roomy; system fonts throughout. */
 
 :root {
   /* Typography */
   --cadre-font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 
-  /* Brand accent — indigo, used sparingly (send button + focus ring) */
-  --cadre-accent: #6366f1;
-  --cadre-accent-hover: #7c83f7;
+  /* Brand accent — Cadre coral-red (links, section labels, focus, selected state) */
+  --cadre-accent: #e2543b;
+  --cadre-accent-hover: #c8462e;
   --cadre-accent-contrast: #ffffff;
 
-  /* Neutral dark-gray surfaces. --cadre-surface aliases the panel base. */
-  --cadre-panel: #212121; /* panel body */
-  --cadre-surface: #212121;
-  --cadre-elevated: #2a2a2a; /* header / hover wash */
-  --cadre-input: #2f2f2f; /* composer + fields */
-  --cadre-user-bubble: #303030; /* user message bubble */
+  /* Primary action — black pill, mirrors the site's "Talk to an AI Strategist" CTA */
+  --cadre-primary: #141414;
+  --cadre-primary-hover: #000000;
+  --cadre-primary-contrast: #ffffff;
 
-  /* Lines & text */
-  --cadre-border: #333333; /* subtle dividers */
-  --cadre-border-strong: #4d4d4f; /* input / chip outlines */
-  --cadre-text: #ececec;
-  --cadre-text-muted: #b4b4b4;
-  --cadre-text-subtle: #8e8e8e;
-  --cadre-danger: #f87171;
-  --cadre-danger-bg: rgba(248, 113, 113, 0.12);
-  --cadre-danger-border: rgba(248, 113, 113, 0.35);
+  /* Warm cream surfaces. --cadre-surface aliases the panel base. */
+  --cadre-panel: #f7f3ea; /* panel body (also carries a subtle gradient) */
+  --cadre-surface: #f7f3ea;
+  --cadre-elevated: #f1ebdf; /* header / hover wash */
+  --cadre-input: #fffdf8; /* composer + fields */
+  --cadre-user-bubble: #eae3d5; /* user message bubble (warm sand) */
+
+  /* Warm lines & text */
+  --cadre-border: #e5ded0; /* subtle dividers */
+  --cadre-border-strong: #d3cab7; /* input / chip outlines */
+  --cadre-text: #17150f;
+  --cadre-text-muted: #6b6459;
+  --cadre-text-subtle: #948c7d;
+  --cadre-danger: #c0392b;
+  --cadre-danger-text: #b42318;
+  --cadre-danger-bg: rgba(192, 57, 43, 0.08);
+  --cadre-danger-border: rgba(192, 57, 43, 0.28);
+
+  /* Accessibility: multiplier for all reading text, set per-user at the widget
+     root by the settings menu (default 1 = ships unchanged). */
+  --cadre-font-scale: 1;
 
   /* Shape & depth */
   --cadre-radius-sm: 10px;
   --cadre-radius-md: 16px;
   --cadre-radius-lg: 22px;
   --cadre-radius-pill: 999px;
-  --cadre-shadow: 0 20px 55px -14px rgba(0, 0, 0, 0.6);
-  --cadre-focus-ring: 0 0 0 3px rgba(99, 102, 241, 0.45);
+  --cadre-shadow: 0 20px 55px -18px rgba(60, 46, 20, 0.28);
+  --cadre-focus-ring: 0 0 0 3px rgba(226, 84, 59, 0.4);
 
   color: var(--cadre-text);
   font-family: var(--cadre-font);
@@ -96,23 +106,22 @@ body {
   width: 60px;
   height: 60px;
   padding: 0;
-  border: 1px solid var(--cadre-border-strong);
+  border: none;
   border-radius: 50%;
-  background: radial-gradient(circle at 30% 25%, #343434 0%, #171717 70%);
-  color: #ececec;
+  background: var(--cadre-primary);
+  color: #f7f3ea;
   box-shadow: var(--cadre-shadow);
   cursor: pointer;
   transition:
     transform 0.15s ease,
-    border-color 0.15s ease,
     box-shadow 0.15s ease;
 }
 
 .cadre-launcher:hover {
-  border-color: var(--cadre-accent);
+  background: var(--cadre-primary-hover);
   box-shadow:
     var(--cadre-shadow),
-    0 0 0 4px rgba(99, 102, 241, 0.14);
+    0 0 0 4px rgba(226, 84, 59, 0.16);
   transform: translateY(-1px);
 }
 
@@ -139,7 +148,10 @@ body {
   height: 640px;
   max-height: calc(100vh - 120px);
   overflow: hidden;
-  background: var(--cadre-panel);
+  /* Soft warm cream: the header sits on the top and the composer + privacy on the
+     gentle warmer bottom. The message area itself is white (see the scroll rule) so
+     the conversation text keeps its contrast. */
+  background: linear-gradient(180deg, #f7f3ea 0%, #efe8d9 100%);
   border: 1px solid var(--cadre-border);
   border-radius: var(--cadre-radius-lg);
   box-shadow: var(--cadre-shadow);
@@ -193,9 +205,9 @@ body {
   height: 32px;
   flex: 0 0 auto;
   border-radius: 50%;
-  color: #ececec;
-  background: linear-gradient(140deg, #3f3f3f 0%, #262626 100%);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  color: #f7f3ea;
+  background: var(--cadre-primary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
 }
 
 /* Small "online" presence dot on the avatar (decorative). */
@@ -227,11 +239,19 @@ body {
   letter-spacing: 0.09em;
   border-radius: var(--cadre-radius-pill);
   color: var(--cadre-text-muted);
-  background: rgba(148, 163, 184, 0.14);
+  background: rgba(23, 21, 15, 0.05);
   border: 1px solid var(--cadre-border-strong);
 }
 
-.cadre-header__close {
+.cadre-header__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+}
+
+/* Shared header icon button — used by both the settings gear and the close button. */
+.cadre-header__icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -248,12 +268,102 @@ body {
     color 0.15s ease;
 }
 
-.cadre-header__close:hover {
-  background: rgba(148, 163, 184, 0.12);
+.cadre-header__icon-btn:hover:not(:disabled),
+.cadre-header__icon-btn[aria-expanded="true"] {
+  background: rgba(23, 21, 15, 0.06);
   color: var(--cadre-text);
 }
 
-.cadre-header__close:focus-visible {
+.cadre-header__icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.cadre-header__icon-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--cadre-focus-ring);
+}
+
+/* ---------------------------------------------------------- settings popover */
+
+.cadre-settings {
+  position: relative;
+  display: inline-flex;
+}
+
+.cadre-settings-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  width: 216px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: var(--cadre-elevated);
+  border: 1px solid var(--cadre-border-strong);
+  border-radius: var(--cadre-radius-md);
+  box-shadow: var(--cadre-shadow);
+}
+
+.cadre-settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.cadre-settings-label {
+  margin: 0;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--cadre-text-subtle);
+}
+
+.cadre-settings-options {
+  display: flex;
+  gap: 6px;
+}
+
+.cadre-settings-option {
+  flex: 1 1 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--cadre-text);
+  background: transparent;
+  border: 1px solid var(--cadre-border-strong);
+  border-radius: 8px;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.cadre-settings-option--size {
+  flex: 0 0 auto;
+  width: 40px;
+}
+
+.cadre-settings-option:hover {
+  border-color: var(--cadre-accent);
+}
+
+.cadre-settings-option[aria-pressed="true"] {
+  color: var(--cadre-accent-contrast);
+  background: var(--cadre-accent);
+  border-color: var(--cadre-accent);
+}
+
+.cadre-settings-option:focus-visible {
   outline: none;
   box-shadow: var(--cadre-focus-ring);
 }
@@ -267,12 +377,22 @@ body {
   flex-direction: column;
 }
 
-/* The scrolling transcript region. */
+/* The scrolling transcript region — white, so message text pops off the warm
+   cream chrome. The bottom of the white fades to transparent, revealing the panel's
+   cream gradient below, so the transcript blends into the composer instead of
+   ending on a hard line. (The background stays fixed to the viewport as content
+   scrolls, so the fade always sits just above the composer.) */
 .cadre-conversation-scroll {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: 18px 16px 8px;
+  padding: 18px 16px 16px;
+  background: linear-gradient(
+    to bottom,
+    #ffffff 0%,
+    #ffffff calc(100% - 30px),
+    rgba(255, 255, 255, 0) 100%
+  );
   scrollbar-width: thin;
   scrollbar-color: var(--cadre-border-strong) transparent;
 }
@@ -321,7 +441,7 @@ body {
 }
 
 .cadre-message-body {
-  font-size: 14.5px;
+  font-size: calc(14.5px * var(--cadre-font-scale));
 }
 
 .cadre-message-user .cadre-message-body {
@@ -343,9 +463,80 @@ body {
   overflow-wrap: anywhere;
 }
 
+/* Rendered assistant Markdown. Block children are spaced with a small rhythm; lists,
+   emphasis, inline code, and links are styled to sit calmly on the white transcript. */
+.cadre-message-md {
+  overflow-wrap: anywhere;
+}
+
+.cadre-message-md > * {
+  margin: 0;
+}
+
+.cadre-message-md > * + * {
+  margin-top: 8px;
+}
+
+.cadre-md-p {
+  line-height: 1.5;
+}
+
+.cadre-md-h {
+  font-weight: 650;
+}
+
+.cadre-message-md ul,
+.cadre-message-md ol {
+  margin: 0;
+  padding-left: 1.35em;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.cadre-md-ul {
+  list-style: disc;
+}
+
+.cadre-md-ol {
+  list-style: decimal;
+}
+
+.cadre-message-md li {
+  line-height: 1.45;
+}
+
+.cadre-message-md li::marker {
+  color: var(--cadre-text-subtle);
+}
+
+.cadre-message-md strong {
+  font-weight: 650;
+}
+
+.cadre-message-md em {
+  font-style: italic;
+}
+
+.cadre-message-md a {
+  color: var(--cadre-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.cadre-md-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: rgba(23, 21, 15, 0.06);
+  border: 1px solid var(--cadre-border);
+  overflow-wrap: anywhere;
+}
+
 .cadre-message-incomplete {
   margin: 0;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--cadre-font-scale));
   color: var(--cadre-text-subtle);
   font-style: italic;
 }
@@ -381,7 +572,7 @@ body {
 
 .cadre-citations-label {
   margin: 0 0 4px;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--cadre-font-scale));
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -399,7 +590,7 @@ body {
 
 .cadre-citations a {
   color: var(--cadre-accent);
-  font-size: 13px;
+  font-size: calc(13px * var(--cadre-font-scale));
   text-decoration: none;
 }
 
@@ -418,7 +609,7 @@ body {
 
 .cadre-chip {
   font: inherit;
-  font-size: 13px;
+  font-size: calc(13px * var(--cadre-font-scale));
   padding: 7px 13px;
   border-radius: var(--cadre-radius-pill);
   border: 1px solid var(--cadre-border-strong);
@@ -456,7 +647,7 @@ body {
 
 .cadre-welcome-text {
   margin: 0;
-  font-size: 17px;
+  font-size: calc(17px * var(--cadre-font-scale));
   font-weight: 600;
   line-height: 1.4;
   color: var(--cadre-text);
@@ -464,7 +655,7 @@ body {
 
 .cadre-welcome-disclosure {
   margin: 0;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--cadre-font-scale));
   line-height: 1.5;
   color: var(--cadre-text-muted);
 }
@@ -472,7 +663,7 @@ body {
 .cadre-loading {
   margin: 0;
   padding: 8px 2px;
-  font-size: 14px;
+  font-size: calc(14px * var(--cadre-font-scale));
   color: var(--cadre-text-muted);
 }
 
@@ -488,7 +679,7 @@ body {
 }
 
 .cadre-feedback-prompt {
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--cadre-font-scale));
   color: var(--cadre-text-subtle);
   margin-right: 2px;
 }
@@ -523,7 +714,7 @@ body {
 
 .cadre-feedback-ack {
   margin: 2px 0 0;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--cadre-font-scale));
   color: var(--cadre-text-muted);
 }
 
@@ -559,7 +750,7 @@ body {
   background: transparent;
   color: var(--cadre-text);
   font: inherit;
-  font-size: 14px;
+  font-size: calc(14px * var(--cadre-font-scale));
   line-height: 1.5;
   resize: none;
   padding: 8px 0;
@@ -587,8 +778,8 @@ body {
   padding: 0;
   border: none;
   border-radius: 50%;
-  background: var(--cadre-accent);
-  color: var(--cadre-accent-contrast);
+  background: var(--cadre-primary);
+  color: var(--cadre-primary-contrast);
   cursor: pointer;
   transition:
     background-color 0.15s ease,
@@ -596,7 +787,7 @@ body {
 }
 
 .cadre-composer-send:hover:not(:disabled) {
-  background: var(--cadre-accent-hover);
+  background: var(--cadre-primary-hover);
 }
 
 .cadre-composer-send:active:not(:disabled) {
@@ -630,9 +821,9 @@ body {
 
 .cadre-error-text {
   margin: 0;
-  font-size: 13px;
+  font-size: calc(13px * var(--cadre-font-scale));
   line-height: 1.45;
-  color: #fca5a5;
+  color: var(--cadre-danger-text);
 }
 
 .cadre-error-actions {
@@ -656,7 +847,7 @@ body {
 .cadre-error-retry {
   border: 1px solid var(--cadre-danger-border);
   background: transparent;
-  color: #fecaca;
+  color: var(--cadre-danger-text);
 }
 
 .cadre-error-retry:hover {
@@ -681,15 +872,14 @@ body {
 
 /* --------------------------------------------------------------- privacy line */
 
+/* Compliance disclosure, shown once inside the opening/welcome message (Vons-style)
+   rather than as a persistent footer. The wording is fixed (must render verbatim);
+   kept small and muted as fine print, aligned with the rest of the welcome. */
 .cadre-privacy {
-  flex: 0 0 auto;
   margin: 0;
-  padding: 10px 16px;
-  font-size: 11px;
+  font-size: calc(11.5px * var(--cadre-font-scale));
   line-height: 1.45;
   color: var(--cadre-text-subtle);
-  background: transparent;
-  border-top: 1px solid var(--cadre-border);
 }
 
 .cadre-privacy a {

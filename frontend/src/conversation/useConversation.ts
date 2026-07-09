@@ -458,10 +458,27 @@ export function useConversation(): UseConversationResult {
   }, [resumeStored, doCreateFresh, status]);
 
   const startNew = useCallback(() => {
-    if (status === "streaming" || status === "reconnecting") return;
+    // Allowed mid-stream: aborting the in-flight controller makes its settle callbacks
+    // no-op (they check `controller.signal.aborted`). Blocked only during a reconnect,
+    // where a racing transcript fetch could clobber the fresh session. (Not blocked
+    // during `creating` so the button that triggers this reset isn't disabled while it
+    // holds focus — see App's focus-restore effect.)
+    if (status === "reconnecting") return;
     clearStoredSession();
     lastSendRef.current = null;
     abortRef.current?.abort();
+    // Reset to a neutral, session-less baseline SYNCHRONOUSLY, before awaiting the new
+    // create. Otherwise a mid-stream reset leaves the aborted turn's streaming
+    // placeholder visible during the round-trip (stuck "typing" dots), and — if the
+    // create then fails — the composer would still send into the OLD, abandoned
+    // conversation (its id/token refs would survive). Clearing here makes a failed
+    // create land in the same clean, composer-disabled state as boot.
+    conversationIdRef.current = null;
+    sessionTokenRef.current = null;
+    setConversationId(null);
+    setSessionToken(null);
+    setMessages([]);
+    setWelcome(null);
     void doCreateFresh();
   }, [doCreateFresh, status]);
 

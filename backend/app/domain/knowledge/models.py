@@ -39,5 +39,10 @@ class KnowledgeSource(BaseModel):
     effective_date: datetime | None = None
     review_date: datetime | None = None
     checksum: str | None = None
+    # A local copy of the document's decoded text, for the admin viewer. None for a
+    # binary/non-UTF-8 upload or a legacy record from before previews were stored.
+    # NEVER included in list responses / KnowledgeSummary; served only via the
+    # content endpoint. Cadre's own content, not PII.
+    content_text: str | None = None
     created_at: datetime
     updated_at: datetime

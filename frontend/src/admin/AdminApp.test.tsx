@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import AdminApp from "./AdminApp";
@@ -8,6 +8,7 @@ import { AdminAuthError } from "./api";
 // per-case resolved/rejected values; createAdminClient returns the same object.
 const getMe = vi.fn();
 const getDashboard = vi.fn();
+const getTrends = vi.fn();
 const listConversations = vi.fn();
 const getConversation = vi.fn();
 const listRequests = vi.fn();
@@ -21,6 +22,7 @@ const redeliver = vi.fn();
 const approveCanonical = vi.fn();
 const verifyPrivacyRequest = vi.fn();
 const listKnowledgeSources = vi.fn();
+const getKnowledgeContent = vi.fn();
 const uploadKnowledge = vi.fn();
 const approveKnowledge = vi.fn();
 const removeKnowledge = vi.fn();
@@ -31,11 +33,15 @@ const getInsightsReport = vi.fn();
 const runInsights = vi.fn();
 const getKnowledgeGaps = vi.fn();
 const getFunnel = vi.fn();
+const getModelProvider = vi.fn();
+const setModelProvider = vi.fn();
+const getUsage = vi.fn();
 
 vi.mock("./api", () => ({
   createAdminClient: () => ({
     getMe,
     getDashboard,
+    getTrends,
     listConversations,
     getConversation,
     listRequests,
@@ -49,6 +55,7 @@ vi.mock("./api", () => ({
     approveCanonical,
     verifyPrivacyRequest,
     listKnowledgeSources,
+    getKnowledgeContent,
     uploadKnowledge,
     approveKnowledge,
     removeKnowledge,
@@ -59,6 +66,9 @@ vi.mock("./api", () => ({
     runInsights,
     getKnowledgeGaps,
     getFunnel,
+    getModelProvider,
+    setModelProvider,
+    getUsage,
   }),
   AdminAuthError: class AdminAuthError extends Error {},
   AdminForbiddenError: class AdminForbiddenError extends Error {},
@@ -160,10 +170,23 @@ function signIn() {
   fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
 }
 
+/** Privileged actions now open a ReasonDialog: type a note + click its confirm button
+ *  (scoped to the dialog, since the row button shares the same label). */
+function confirmDialog(confirmName: string, reason = "audit reason") {
+  const dialog = screen.getByRole("dialog");
+  fireEvent.change(within(dialog).getByLabelText("Reason"), { target: { value: reason } });
+  fireEvent.click(within(dialog).getByRole("button", { name: confirmName }));
+}
+
 beforeEach(() => {
+  // The app now persists a session in sessionStorage; clear it so each test
+  // starts logged-out and the login-form assertions hold.
+  sessionStorage.clear();
   // Sensible defaults; individual tests override role (getMe) as needed.
   getMe.mockResolvedValue({ username: "admin", role: "admin" });
   getDashboard.mockResolvedValue(DASHBOARD);
+  // Empty series by default → no KPI delta chips (keeps totals unique for assertions).
+  getTrends.mockResolvedValue({ points: [] });
   listConversations.mockResolvedValue({ conversations: [] });
   listRequests.mockResolvedValue({ requests: [FAILED_REQUEST] });
   listUnresolved.mockResolvedValue({ questions: [] });
@@ -171,6 +194,12 @@ beforeEach(() => {
   listAudit.mockResolvedValue({ entries: [] });
   listPrivacyRequests.mockResolvedValue({ requests: [PENDING_PRIVACY] });
   listKnowledgeSources.mockResolvedValue({ sources: [KNOWLEDGE_SOURCE] });
+  getKnowledgeContent.mockResolvedValue({
+    source_id: "kbs_1",
+    title: "Portal Guide",
+    content: "# Portal Guide\nHow to reset your password.",
+    available: true,
+  });
   approveKnowledge.mockResolvedValue({ ...KNOWLEDGE_SOURCE, approved: true });
   removeKnowledge.mockResolvedValue({ ...KNOWLEDGE_SOURCE, lifecycle: "removed" });
   getLatestInsights.mockResolvedValue({ report: INSIGHTS_REPORT });
@@ -220,7 +249,69 @@ beforeEach(() => {
   });
   redeliver.mockResolvedValue({ ok: true, detail: "queued" });
   approveCanonical.mockResolvedValue({ ok: true, detail: "approved" });
-  vi.stubGlobal("prompt", vi.fn(() => "audit reason"));
+  getModelProvider.mockResolvedValue({
+    active: "openai",
+    default: "openai",
+    available: ["openai", "anthropic"],
+  });
+  setModelProvider.mockResolvedValue({ ok: true, detail: "switched" });
+  getUsage.mockResolvedValue({
+    window_days: 30,
+    total_input_tokens: 1200,
+    total_output_tokens: 800,
+    total_cost_usd: 0.42,
+    by_provider: [
+      {
+        label: "anthropic",
+        provider: "anthropic",
+        input_tokens: 1200,
+        output_tokens: 800,
+        requests: 5,
+        cost_usd: 0.42,
+        priced: true,
+      },
+    ],
+    by_model: [
+      {
+        label: "claude-haiku-4-5",
+        provider: "anthropic",
+        input_tokens: 1200,
+        output_tokens: 800,
+        requests: 5,
+        cost_usd: 0.42,
+        priced: true,
+      },
+    ],
+    by_category: [
+      {
+        label: "summary",
+        provider: "anthropic",
+        input_tokens: 1200,
+        output_tokens: 800,
+        requests: 5,
+        cost_usd: 0.42,
+        priced: true,
+      },
+    ],
+    unpriced_models: ["gpt-5.4-mini"],
+    providers: [
+      {
+        provider: "anthropic",
+        active: true,
+        configured: true,
+        model: "claude-haiku-4-5",
+        key_last4: "WxYz",
+      },
+      {
+        provider: "openai",
+        active: false,
+        configured: true,
+        model: "gpt-5.4-mini",
+        key_last4: null,
+      },
+    ],
+    budget: { monthly_usd: 100, month_to_date_usd: 0.42, pct: 0.4, over: false },
+  });
 });
 
 afterEach(() => {
@@ -234,6 +325,29 @@ describe("AdminApp", () => {
     expect(screen.getByLabelText("Username")).toBeInTheDocument();
     expect(screen.getByLabelText("Password")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
+  });
+
+  it("restores a persisted session from sessionStorage without re-login", async () => {
+    sessionStorage.setItem(
+      "cadre_admin_creds",
+      JSON.stringify({ username: "admin", password: "secret" }),
+    );
+    render(<AdminApp />);
+
+    // The persisted session is verified via getMe and the shell renders — no login.
+    expect(await screen.findByText("admin (admin)")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Username")).not.toBeInTheDocument();
+  });
+
+  it("clears the persisted session on sign out", async () => {
+    render(<AdminApp />);
+    signIn();
+    await screen.findByText("admin (admin)");
+    expect(sessionStorage.getItem("cadre_admin_creds")).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+    expect(sessionStorage.getItem("cadre_admin_creds")).toBeNull();
   });
 
   it("renders the dashboard totals and identity after a successful login", async () => {
@@ -291,9 +405,10 @@ describe("AdminApp", () => {
     const revealButton = await screen.findByRole("button", { name: "Reveal" });
     expect(screen.getByRole("button", { name: "Redeliver" })).toBeInTheDocument();
 
-    // Clicking Reveal prompts for a reason and swaps the masked email cell for
-    // the unmasked address (and shows the unmasked contact name inline).
+    // Clicking Reveal opens the confirm modal; confirming swaps the masked email cell
+    // for the unmasked address (and shows the unmasked contact name inline).
     fireEvent.click(revealButton);
+    confirmDialog("Reveal");
     expect(await screen.findByText("jane@example.com")).toBeInTheDocument();
     expect(screen.getByText(/Jane Doe/)).toBeInTheDocument();
     expect(revealRequest).toHaveBeenCalledWith("req_1", "audit reason");
@@ -311,8 +426,9 @@ describe("AdminApp", () => {
     await screen.findByText("vera (viewer)");
 
     fireEvent.click(screen.getByRole("button", { name: "Privacy" }));
-    // Pending request data is visible (type + summarized result counts)…
-    expect(await screen.findByText("deletion")).toBeInTheDocument();
+    // Pending request data is visible (type + summarized result counts). Scope to the
+    // table cell — "deletion" is also a Type filter <option> now.
+    expect(await screen.findByRole("cell", { name: "deletion" })).toBeInTheDocument();
     expect(screen.getByText("3 conversations, 2 requests, 1 feedback")).toBeInTheDocument();
     // …but a viewer gets no Verify button.
     expect(screen.queryByRole("button", { name: "Verify" })).not.toBeInTheDocument();
@@ -325,13 +441,61 @@ describe("AdminApp", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Privacy" }));
 
-    // Admin sees Verify on the pending row; clicking prompts for a reason and
-    // calls verifyPrivacyRequest(request_id, reason).
+    // Admin sees Verify on the pending row; clicking opens the confirm modal and
+    // confirming calls verifyPrivacyRequest(request_id, reason).
     const verifyButton = await screen.findByRole("button", { name: "Verify" });
     fireEvent.click(verifyButton);
+    confirmDialog("Verify");
     await waitFor(() =>
       expect(verifyPrivacyRequest).toHaveBeenCalledWith("prv_1", "audit reason"),
     );
+  });
+
+  it("lets an admin switch the model provider with an audited reason", async () => {
+    render(<AdminApp />);
+    signIn();
+    await screen.findByText("admin (admin)");
+
+    fireEvent.click(screen.getByRole("button", { name: "Model provider" }));
+
+    // The active provider is shown; the dropdown + Apply are available to an admin.
+    expect(await screen.findByText("Chat model provider")).toBeInTheDocument();
+    expect(screen.getByText("Active: OpenAI (GPT)")).toBeInTheDocument();
+
+    // Selecting a different provider and clicking Apply prompts for a reason and
+    // calls setModelProvider(provider, reason).
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "anthropic" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    confirmDialog("Switch provider");
+    await waitFor(() =>
+      expect(setModelProvider).toHaveBeenCalledWith("anthropic", "audit reason"),
+    );
+  });
+
+  it("shows the model provider read-only to a viewer (no Apply button)", async () => {
+    getMe.mockResolvedValue({ username: "vera", role: "viewer" });
+    render(<AdminApp />);
+    signIn();
+    await screen.findByText("vera (viewer)");
+
+    fireEvent.click(screen.getByRole("button", { name: "Model provider" }));
+    expect(await screen.findByText("Active: OpenAI (GPT)")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Apply" })).not.toBeInTheDocument();
+  });
+
+  it("shows the LLM usage & cost panel with spend, budget, and masked key", async () => {
+    render(<AdminApp />);
+    signIn();
+    await screen.findByText("admin (admin)");
+
+    fireEvent.click(screen.getByRole("button", { name: "Usage & cost" }));
+
+    // Total spend + per-provider card with the masked API key tail and active badge.
+    expect(await screen.findByText("LLM spend — last 30 days")).toBeInTheDocument();
+    expect(screen.getByText("API key: ••••WxYz")).toBeInTheDocument();
+    expect(screen.getByText(/Month-to-date:/)).toBeInTheDocument();
+    // Unpriced OpenAI model is surfaced, not hidden.
+    expect(screen.getByText(/unpriced model/)).toBeInTheDocument();
   });
 
   it("shows the Knowledge upload form and lets an admin approve a source", async () => {
@@ -347,10 +511,25 @@ describe("AdminApp", () => {
     // An unapproved (pending) source must NOT read as actively "Indexing…".
     expect(screen.getByText("Not indexed")).toBeInTheDocument();
 
-    // Approve on an active, unapproved source prompts for a reason and calls
-    // approveKnowledge(source_id, reason).
+    // Approve on an active, unapproved source opens the confirm modal, and confirming
+    // calls approveKnowledge(source_id, reason).
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    confirmDialog("Approve");
     await waitFor(() => expect(approveKnowledge).toHaveBeenCalledWith("kbs_1", "audit reason"));
+  });
+
+  it("opens the document viewer when the knowledge title is clicked", async () => {
+    render(<AdminApp />);
+    signIn();
+    await screen.findByText("admin (admin)");
+
+    fireEvent.click(screen.getByRole("button", { name: "Knowledge" }));
+    // The title is a button that opens the read-only document viewer.
+    fireEvent.click(await screen.findByRole("button", { name: "Portal Guide" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/How to reset your password/)).toBeInTheDocument();
+    expect(getKnowledgeContent).toHaveBeenCalledWith("kbs_1");
   });
 
   it("shows the conversation TL;DR summary in the conversations list", async () => {
@@ -406,8 +585,10 @@ describe("AdminApp", () => {
     expect(screen.getByText("Pricing detail")).toBeInTheDocument();
     expect(screen.getByText(/asked 7×/)).toBeInTheDocument();
 
-    // Approve FAQ approves the auto-drafted canonical via the existing gate.
+    // Approve FAQ opens the confirm modal; confirming approves the auto-drafted
+    // canonical via the existing gate.
     fireEvent.click(screen.getByRole("button", { name: "Approve FAQ" }));
+    confirmDialog("Approve");
     await waitFor(() =>
       expect(approveCanonical).toHaveBeenCalledWith("insight_abc123", "audit reason"),
     );
@@ -433,6 +614,7 @@ describe("AdminApp", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Knowledge" }));
     fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
+    confirmDialog("Approve");
 
     // A 401 mid-action invalidates the session → back to the login screen (not an
     // inline error), matching the list-fetch path.

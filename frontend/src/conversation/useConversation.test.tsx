@@ -34,20 +34,27 @@ let rejectSend: ((err: unknown) => void) | null = null;
 function Harness() {
   const c = useConversation();
   return (
-    <ConversationView
-      welcome={c.welcome}
-      messages={c.messages}
-      status={c.status}
-      error={c.error}
-      canSend={c.canSend}
-      onSend={c.send}
-      onSelectAction={() => {}}
-      onRetry={c.retryLast}
-      onReconnect={c.reconnect}
-      onStartNew={c.startNew}
-      onRate={c.rate}
-      onDismissError={c.clearError}
-    />
+    <>
+      {/* Test-only affordance to invoke startNew from any state (the header button
+          that drives it in the app lives in the shell, not this view). */}
+      <button type="button" data-testid="test-start-new" onClick={c.startNew}>
+        test-start-new
+      </button>
+      <ConversationView
+        welcome={c.welcome}
+        messages={c.messages}
+        status={c.status}
+        error={c.error}
+        canSend={c.canSend}
+        onSend={c.send}
+        onSelectAction={() => {}}
+        onRetry={c.retryLast}
+        onReconnect={c.reconnect}
+        onStartNew={c.startNew}
+        onRate={c.rate}
+        onDismissError={c.clearError}
+      />
+    </>
   );
 }
 
@@ -349,5 +356,57 @@ describe("useConversation guards", () => {
       resolveSend?.();
     });
     expect(screen.queryByText(ERROR_COPY.generalFailure)).not.toBeInTheDocument();
+  });
+});
+
+describe("useConversation startNew", () => {
+  it("starts a fresh chat mid-stream: aborts the turn, clears the transcript, re-enables input", async () => {
+    const input = await renderAndSend("hello");
+    act(() => capturedOnEvent!({ event: "response.delta", data: { text: "partial answer" } }));
+    expect(screen.getByText("partial answer")).toBeInTheDocument();
+    expect(input).toBeDisabled();
+
+    // The fresh conversation gets its own id/token/welcome.
+    mockedCreate.mockResolvedValueOnce({
+      conversation_id: "cnv_2",
+      session_token: "tok_2",
+      welcome: { text: "How can I help?", suggested_actions: [] },
+    });
+
+    fireEvent.click(screen.getByTestId("test-start-new"));
+
+    // Back to a clean welcome state: transcript wiped, a second create issued.
+    await screen.findByText("How can I help?");
+    expect(screen.queryByText("partial answer")).not.toBeInTheDocument();
+    expect(mockedCreate).toHaveBeenCalledTimes(2);
+    expect(screen.getByLabelText("Message")).not.toBeDisabled();
+
+    // The aborted stream settling afterwards must not resurrect the old turn.
+    await act(async () => {
+      resolveSend?.();
+    });
+    expect(screen.queryByText("partial answer")).not.toBeInTheDocument();
+    expect(screen.queryByText(ERROR_COPY.generalFailure)).not.toBeInTheDocument();
+  });
+
+  it("mid-stream new chat that fails to create lands clean (no stuck turn, composer disabled)", async () => {
+    await renderAndSend("hello");
+    act(() => capturedOnEvent!({ event: "response.delta", data: { text: "partial answer" } }));
+    expect(screen.getByText("partial answer")).toBeInTheDocument();
+
+    // The fresh create fails (cold start / blip).
+    mockedCreate.mockRejectedValueOnce(new Error("cold start"));
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("test-start-new"));
+    });
+
+    // The abandoned turn is gone (no stuck typing indicator), and because the old
+    // session was cleared there is nothing to send into: the composer is disabled and
+    // the only recovery is "Try again".
+    expect(screen.queryByText("partial answer")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Message")).toBeDisabled();
+    expect(screen.getByText(ERROR_COPY.startFailed)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
   });
 });

@@ -48,9 +48,12 @@ export function actionLabel(id: string): string {
   return ACTION_LABELS[id] ?? id.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-// Supporting disclosure shown on the welcome / empty state (docs/05 §opening disclosure).
+// Supporting disclosure shown on the welcome / empty state (docs/05 §opening
+// disclosure). The AI-use + data notice is carried by the privacy disclosure shown
+// just above this in the opening message, so this line omits "uses AI" to avoid a
+// duplicate notice and keeps only the capability + escalation guidance.
 export const WELCOME_DISCLOSURE =
-  "This assistant uses AI and may not have every answer. You can ask to speak with a person at any time.";
+  "This assistant may not have every answer. You can ask to speak with a person at any time.";
 
 // Feedback acknowledgement (docs/05 §feedback).
 export const FEEDBACK_ACK = "Thank you. Your feedback will help Cadre improve the assistant.";

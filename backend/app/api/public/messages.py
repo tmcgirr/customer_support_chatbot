@@ -2,21 +2,22 @@
 
 from datetime import datetime
 
-from fastapi import APIRouter
-from pydantic import BaseModel
+from fastapi import APIRouter, Request
+from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
-from app.api.deps import OrchestratorDep, RepoDep, SessionDep
+from app.api.deps import OrchestratorDep, RateLimiterDep, RepoDep, SessionDep
 from app.api.sse import sse_response
 from app.core.config import get_settings
 from app.core.errors import AppError, ErrorCode
+from app.core.net import client_ip
 
 router = APIRouter(prefix="/api/v1/conversations", tags=["messages"])
 
 
 class SendMessageRequest(BaseModel):
     content: str
-    client_message_id: str
+    client_message_id: str = Field(max_length=200)
 
 
 class Citation(BaseModel):
@@ -43,14 +44,33 @@ class TranscriptResponse(BaseModel):
 async def send_message(
     conversation_id: str,
     body: SendMessageRequest,
+    request: Request,
     orchestrator: OrchestratorDep,
+    rate_limiter: RateLimiterDep,
     _session: SessionDep,
 ) -> StreamingResponse:
+    settings = get_settings()
     content = body.content
     if not content.strip():
         raise AppError(ErrorCode.INVALID_REQUEST, "Message content is required.")
-    if len(content) > get_settings().message_max_chars:
+    if len(content) > settings.message_max_chars:
         raise AppError(ErrorCode.MESSAGE_TOO_LONG)
+
+    # Throttle the paid LLM path per-session AND per-IP BEFORE starting a turn. The
+    # per-conversation message_cap bounds the total; this bounds the rate so one
+    # session/IP can't drive denial-of-wallet (SECURITY_REVIEW_V1 M1).
+    within_session = await rate_limiter.hit(
+        f"msg:{conversation_id}",
+        limit=settings.message_rate_cap,
+        window_seconds=settings.message_rate_window_seconds,
+    )
+    within_ip = await rate_limiter.hit(
+        f"msgip:{client_ip(request)}",
+        limit=settings.message_ip_cap,
+        window_seconds=settings.message_ip_window_seconds,
+    )
+    if not (within_session and within_ip):
+        raise AppError(ErrorCode.RATE_LIMIT, retryable=True)
 
     result = await orchestrator.start_turn(conversation_id, content, body.client_message_id)
     if result.outcome == "NOT_FOUND":

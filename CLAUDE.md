@@ -66,10 +66,12 @@ These hold from the POC and remain load-bearing in V1:
 3. **One atomic turn operation.** Run lock + user-message append + duplicate check +
    message cap in a single `findOneAndUpdate` (docs 03 §3.1). A live turn heartbeats its
    lock; a leaked lock is swept. Never add a second lock mechanism or a messages collection.
-4. **Provider isolation.** OpenAI types/IDs/errors never leave `app/agent/adapter.py`.
-   The SAME rule applies to every external system in V1: CRM/scheduler and ticketing SDKs,
-   IDs, and errors never leave their adapter in `app/domain/delivery/`. Downstream sees
-   normalized types only.
+4. **Provider isolation.** Model-provider types/IDs/errors (OpenAI **and** Anthropic) never
+   leave `app/agent/adapter.py` — both `OpenAIResponsesAdapter` and `AnthropicMessagesAdapter`
+   sit behind the one `ModelAdapter` protocol; which one is active is resolved outside
+   (`app/agent/provider.py`) and switchable at runtime from admin. The SAME rule applies to
+   every external system in V1: CRM/scheduler and ticketing SDKs, IDs, and errors never leave
+   their adapter in `app/domain/delivery/`. Downstream sees normalized types only.
 5. **No PII or message content in logs.** Structured events with IDs only. Applies to
    exceptions and to the worker/delivery paths. Event messages are static; a static AST
    scan + the runtime formatter guard enforce it (`tests/core/test_log_hygiene.py`).
@@ -95,9 +97,10 @@ These hold from the POC and remain load-bearing in V1:
     in admin. The model never delivers; the request handler never delivers inline. Ambiguous
     outcomes are resolved by the job, **never by re-prompting the user**.
 12. **Admin is role-controlled: `admin` and `viewer`** (via the production identity
-    provider). Masking is the default. **Every PII reveal/export requires a reason and
-    writes an append-only audit record** (`app/domain/audit/`); content and deletion actions
-    are audited too.
+    provider). Masking is the default. **Every PII reveal/export, content, and deletion action
+    writes an append-only audit record** (`app/domain/audit/`) with a non-empty `reason`. The
+    reason is optional to *type* in the admin UI — a descriptive default is auto-recorded when
+    left blank (DECISIONS_LOG 2026-07-09); the backend still requires a non-empty reason.
 13. **Data lifecycle is job-driven and verified.** Retention classes/periods are enforced by
     scheduled worker jobs; deletion requests are verified, then execute single-store deletion
     plus documented provider-retention terms. No ad-hoc deletes on the request path.
@@ -105,7 +108,10 @@ These hold from the POC and remain load-bearing in V1:
     Store). Approved content, prompts, and model config are **promoted**, never edited
     directly in production; the golden set gates every promotion.
 15. **Prompts and model configuration are versioned.** Changing either requires the golden
-    gate to pass on the target config; an approved fallback model is configured.
+    gate to pass on the target config; an approved fallback model is configured. The chat
+    provider (OpenAI/Anthropic) is admin-switchable at runtime (persisted in `app_settings`,
+    audited); gate the target provider first with `eval.run --provider <p>` — a switch is a
+    promotion, not an ad-hoc edit.
 
 ## Code conventions
 
@@ -122,16 +128,22 @@ These hold from the POC and remain load-bearing in V1:
   external API (model, CRM, ticketing) in tests. Delivery jobs get failure-path tests
   (retry, dead-letter, replay) — a V1 gate requirement.
 - Frontend: React + TS + Vite. Widget runs in an iframe; host page communication only via
-  origin-checked `postMessage`. Admin is a separate entry (`admin.html`). No `localStorage`
-  for anything sensitive; admin creds/tokens in memory only.
+  origin-checked `postMessage`. Admin is a separate entry (`admin.html`). Never `localStorage`
+  for anything sensitive; admin Basic-auth creds persist only in `sessionStorage` (per-tab,
+  cleared on sign-out/tab close, re-verified via `/me` on load) — see DECISIONS_LOG 2026-07-09.
 - Config only via `app/core/config.py` (pydantic-settings). Never read `os.environ`
   elsewhere. `ENV` defaults to `prod` (fail-closed); non-dev refuses default secrets.
 - Conventional commits; one phase checkpoint per commit (see `plan.md`).
 
 ## Content rules (mirror the prompt, enforce in code review)
 
-The bot must never state prices, certifications, client names, SLAs, timelines, or AI
-Maturity methodology; never request credentials; never confirm whether someone is a client.
+The bot must never state a fixed consulting fee/hourly rate/project total, certifications,
+compliance/residency status, specific client or individual names, SLAs, or timelines; never
+request credentials; never confirm whether someone is a client. It MAY state approved public
+facts served via canonical/knowledge: the published pricing framing (the AI Transformation
+Intensive; ~$30/employee/month for underlying AI *tool* licenses), the public eight-pillar
+AI-Maturity framework (but no numeric scoring), the data-isolation assurance, and anonymized
+outcomes (no names). See the 2026-07-09 content-refresh entry in `docs/DECISIONS_LOG.md`.
 Covered by `eval/golden_set.yaml`. If you touch `app/agent/prompts/`, canonical seeds, or
 approved content, run `python -m eval.run` on the target config and include the result.
 `must_use_canonical` is a hard gate only for the mandatory-canonical topics (invariant 8);

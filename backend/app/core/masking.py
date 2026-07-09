@@ -22,6 +22,16 @@ def mask_email(email: str | None) -> str:
     return f"{masked_local}@{domain}"
 
 
+def mask_company(company: str | None) -> str | None:
+    """A company name identifies a prospective client (content rule: never confirm who
+    is a client). Redact it in list views; the full value is available only via the
+    audited reveal endpoint, exactly like email (SECURITY_REVIEW_V1 L5). Returns None
+    when absent so the UI shows nothing, and a fixed redaction marker when present."""
+    if not company or not company.strip():
+        return None
+    return "•••"
+
+
 def mask_emails_in_text(text: str) -> str:
     return _EMAIL_RE.sub(lambda match: mask_email(match.group(0)), text)
 

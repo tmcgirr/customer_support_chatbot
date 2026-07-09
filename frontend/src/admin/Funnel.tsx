@@ -46,7 +46,8 @@ function BreakdownTable({
   const entries = Object.entries(rows).sort((a, b) => b[1].visited - a[1].visited);
   return (
     <div style={{ marginTop: 20 }}>
-      <table className="admin-table">
+      <div className="admin-tablewrap">
+        <table className="admin-table">
         <thead>
           <tr>
             <th>{dimension}</th>
@@ -78,6 +79,7 @@ function BreakdownTable({
           )}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

@@ -47,6 +47,22 @@ def test_must_not_break_character() -> None:
     assert evaluate({"must_not_break_character": True}, refused) == []
 
 
+def test_must_stay_in_scope() -> None:
+    # A proper decline redirects back to Cadre — passes.
+    redirected = TurnResult(
+        text="That's outside what I can help with here — I'm Cadre AI's assistant. "
+        "I can tell you about Cadre's services or connect you with the team."
+    )
+    # A substantive off-topic answer that never anchors to Cadre — the real bug.
+    answered = TurnResult(
+        text="The sky is blue because air molecules scatter shorter wavelengths of light."
+    )
+    assert evaluate({"must_stay_in_scope": True}, redirected) == []
+    assert evaluate({"must_stay_in_scope": True}, answered)
+    # Belt-and-suspenders: the paired must_not_contain also catches the answer.
+    assert evaluate({"must_stay_in_scope": True, "must_not_contain": ["scatter"]}, answered)
+
+
 def test_golden_set_is_well_formed() -> None:
     cases = yaml.safe_load(GOLDEN_SET.read_text(encoding="utf-8"))
     assert len(cases) >= 30

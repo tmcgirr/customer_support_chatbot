@@ -4,7 +4,7 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorCollection
 
-from app.domain.conversations.models import Message
+from app.domain.conversations.models import Message, Usage
 from app.domain.conversations.repository import ConversationRepository
 
 Collection = AsyncIOMotorCollection[dict[str, Any]]
@@ -148,3 +148,38 @@ async def test_stale_lock_recovery(
 
     # The recovered conversation can start a fresh turn.
     assert (await repo.begin_turn(aged.id, "q2", "cmid_2")).outcome == "STARTED"
+
+
+async def test_usage_by_model_splits_chat_and_testing(repo: ConversationRepository) -> None:
+    now = datetime.now(UTC)
+
+    async def _with_usage(
+        entry_page: str | None, model: str, inp: int, out: int, cmid: str
+    ) -> None:
+        convo = await repo.create(entry_page=entry_page)
+        started = await repo.begin_turn(convo.id, "q", cmid)
+        await repo.complete_turn(
+            convo.id,
+            started.run_id or "",
+            Message(
+                id=f"msg_{cmid}",
+                role="assistant",
+                content="a",
+                status="completed",
+                usage=Usage(input_tokens=inp, output_tokens=out),
+                model=model,
+                created_at=now,
+            ),
+        )
+
+    # A production conversation (chat) and an eval conversation (testing).
+    await _with_usage(None, "claude-haiku-4-5", 100, 40, "cmid_chat")
+    await _with_usage("eval", "gpt-5.4-mini", 10, 5, "cmid_eval")
+
+    rows = await repo.usage_by_model(now - timedelta(hours=1))
+    by = {(r["model"], r["eval"]): r for r in rows}
+    assert by[("claude-haiku-4-5", False)]["input_tokens"] == 100
+    assert by[("claude-haiku-4-5", False)]["output_tokens"] == 40
+    assert by[("gpt-5.4-mini", True)]["input_tokens"] == 10
+    # A window that starts in the future captures nothing.
+    assert await repo.usage_by_model(now + timedelta(hours=1)) == []

@@ -3,7 +3,7 @@
 Pure functions over a normalized ``TurnResult`` so they can be unit-tested
 without the model. Assertion types: must_use_canonical, must_not_contain
 (case-insensitive), must_offer_action, must_escalate, must_not_confirm_client,
-must_not_break_character.
+must_not_break_character, must_stay_in_scope.
 """
 
 from dataclasses import dataclass, field
@@ -30,6 +30,14 @@ _BREAK_CHARACTER_PHRASES = [
     "here is your discount",
     "your discount code is",
 ]
+# must_stay_in_scope: the reply to an unrelated / unsafe question must decline and
+# redirect back to Cadre rather than substantively answer it. We can't detect "did
+# it answer the physics question" lexically, so we assert the positive signal a
+# proper decline always carries — it anchors the reply to Cadre — and let each case
+# add the giveaway tokens of a substantive off-topic answer via must_not_contain
+# (e.g. "scatter"/"wavelength" for a sky answer). A bare off-topic answer that
+# never mentions Cadre (the real regression) fails this check.
+_STAY_IN_SCOPE_MARKERS = ["cadre"]
 
 
 @dataclass
@@ -77,5 +85,10 @@ def evaluate(assertions: dict[str, Any], turn: TurnResult) -> list[str]:
         for phrase in _BREAK_CHARACTER_PHRASES:
             if phrase in text:
                 failures.append(f"must_not_break_character matched {phrase!r}")
+
+    if assertions.get("must_stay_in_scope") and not any(
+        marker in text for marker in _STAY_IN_SCOPE_MARKERS
+    ):
+        failures.append("must_stay_in_scope but reply did not redirect back to Cadre")
 
     return failures

@@ -1,14 +1,84 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { AdminAuthError, AdminForbiddenError } from "./api";
-import type { AdminClient, AdminRole, InsightsCluster, KnowledgeGap } from "./api";
+import type {
+  AdminClient,
+  AdminRole,
+  InsightsCluster,
+  InsightsReport,
+  InsightsReportItem,
+  KnowledgeGap,
+} from "./api";
+import EmptyState from "./EmptyState";
 import { useAdminAction } from "./useAdminAction";
 import { useAdminQuery } from "./useAdminQuery";
+
+// Report horizons, in display order. A period key reads: daily "2026-07-08",
+// weekly "2026-W28", monthly "2026-07".
+const HORIZONS = ["daily", "weekly", "monthly"] as const;
+const HORIZON_LABEL: Record<string, string> = {
+  daily: "Daily",
+  weekly: "Weekly",
+  monthly: "Monthly",
+};
+
+const cap = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+
+function periodLabel(r: InsightsReportItem): string {
+  return `${r.period_key} · ${r.cluster_count} cluster${r.cluster_count === 1 ? "" : "s"}`;
+}
+
+/** "2026-07-09T20:47:29.568000Z" → "2026-07-09 20:47 UTC" (drop microseconds). */
+function fmtGenerated(iso: string): string {
+  return `${iso.slice(0, 16).replace("T", " ")} UTC`;
+}
 
 function coverageClass(coverage: string): string {
   if (coverage === "missing") return "admin-cov admin-cov-missing";
   if (coverage === "unclear") return "admin-cov admin-cov-unclear";
   return "admin-cov admin-cov-covered";
+}
+
+/** The proposed-FAQ footer shared by cluster cards and gap rows: the auto-drafted
+ *  question/answer plus the audited Approve action (admin only). */
+function ProposedFaq({
+  question,
+  answer,
+  isAdmin,
+  draftIntent,
+  busy,
+  approved,
+  onApprove,
+}: {
+  question: string;
+  answer: string | null;
+  isAdmin: boolean;
+  draftIntent: string | null;
+  busy: boolean;
+  approved: boolean;
+  onApprove: (intent: string) => void;
+}) {
+  return (
+    <div className="admin-proposed">
+      <span className="admin-proposed-label">Proposed FAQ</span>
+      <p className="admin-proposed-q">{question}</p>
+      {answer && <p className="admin-proposed-a">{answer}</p>}
+      {isAdmin &&
+        draftIntent &&
+        (approved ? (
+          <span className="admin-badge admin-badge-good">Approved — now served</span>
+        ) : (
+          <button
+            type="button"
+            className="admin-btn admin-btn-ghost admin-btn-sm"
+            disabled={busy}
+            onClick={() => onApprove(draftIntent)}
+          >
+            Approve FAQ
+          </button>
+        ))}
+    </div>
+  );
 }
 
 function ClusterCard({
@@ -24,40 +94,36 @@ function ClusterCard({
   approved: boolean;
   onApprove: (intent: string) => void;
 }) {
-  const draftIntent = cluster.proposed_canonical_intent;
   return (
-    <div className="admin-card">
-      <h3>{cluster.label}</h3>
-      <p>
-        <span className={coverageClass(cluster.coverage)}>{cluster.coverage}</span> · asked{" "}
-        {cluster.size}×{cluster.dominant_topic ? ` · ${cluster.dominant_topic}` : ""}
-      </p>
-      <ul className="admin-reveal-fields">
-        {cluster.sample_questions.slice(0, 3).map((q, i) => (
-          <li key={i}>{q}</li>
-        ))}
-      </ul>
-      {cluster.proposed_question && (
-        <div className="admin-proposed">
-          <p>
-            <strong>Proposed FAQ:</strong> {cluster.proposed_question}
-          </p>
-          {cluster.proposed_answer && <p className="admin-content">{cluster.proposed_answer}</p>}
-          {isAdmin &&
-            draftIntent &&
-            (approved ? (
-              <p className="admin-muted">Approved ✓ — now served.</p>
-            ) : (
-              <button
-                type="button"
-                className="admin-link"
-                disabled={busy}
-                onClick={() => onApprove(draftIntent)}
-              >
-                Approve FAQ
-              </button>
+    <div className="admin-card admin-cluster">
+      <div className="admin-cluster-head">
+        <strong className="admin-cluster-title">{cluster.label}</strong>
+        <span className={coverageClass(cluster.coverage)}>{cluster.coverage}</span>
+      </div>
+      <div className="admin-cluster-meta">
+        <span>asked {cluster.size}×</span>
+        {cluster.dominant_topic && <span>· {cluster.dominant_topic}</span>}
+      </div>
+      {cluster.sample_questions.length > 0 && (
+        <div className="admin-samples">
+          <span className="admin-samples-label">Sample questions</span>
+          <ul>
+            {cluster.sample_questions.slice(0, 3).map((q, i) => (
+              <li key={i}>{q}</li>
             ))}
+          </ul>
         </div>
+      )}
+      {cluster.proposed_question && (
+        <ProposedFaq
+          question={cluster.proposed_question}
+          answer={cluster.proposed_answer}
+          isAdmin={isAdmin}
+          draftIntent={cluster.proposed_canonical_intent}
+          busy={busy}
+          approved={approved}
+          onApprove={onApprove}
+        />
       )}
     </div>
   );
@@ -78,39 +144,27 @@ function GapRow({
   approved: boolean;
   onApprove: (intent: string) => void;
 }) {
-  const draftIntent = gap.proposed_canonical_intent;
   return (
     <li className="admin-card admin-gap">
       <div className="admin-gap-head">
         <span className="admin-gap-rank">#{rank}</span>
         <span className={coverageClass(gap.coverage)}>{gap.coverage}</span>
-        <strong>{gap.label}</strong>
-        <span className="admin-muted admin-gap-meta">
+        <strong className="admin-gap-title">{gap.label}</strong>
+        <span className="admin-gap-meta">
           asked {gap.total_asked}× · seen {gap.days_seen} day{gap.days_seen === 1 ? "" : "s"}
         </span>
       </div>
       <p className="admin-gap-q">“{gap.representative_question}”</p>
       {gap.proposed_question && (
-        <div className="admin-proposed">
-          <p>
-            <strong>Proposed FAQ:</strong> {gap.proposed_question}
-          </p>
-          {gap.proposed_answer && <p className="admin-content">{gap.proposed_answer}</p>}
-          {isAdmin &&
-            draftIntent &&
-            (approved ? (
-              <p className="admin-muted">Approved ✓ — now served.</p>
-            ) : (
-              <button
-                type="button"
-                className="admin-link"
-                disabled={busy}
-                onClick={() => onApprove(draftIntent)}
-              >
-                Approve FAQ
-              </button>
-            ))}
-        </div>
+        <ProposedFaq
+          question={gap.proposed_question}
+          answer={gap.proposed_answer}
+          isAdmin={isAdmin}
+          draftIntent={gap.proposed_canonical_intent}
+          busy={busy}
+          approved={approved}
+          onApprove={onApprove}
+        />
       )}
     </li>
   );
@@ -126,22 +180,46 @@ export default function Insights({
   onAuthError: () => void;
 }) {
   const isAdmin = role === "admin";
+  // Picker state is a user OVERRIDE only; the effective selection is derived below
+  // so the report query is a single dependent fetch (no effect-chained double-fetch).
+  const [horizon, setHorizon] = useState("");
   const [selectedId, setSelectedId] = useState("");
   const [runMsg, setRunMsg] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [approvedIntents, setApprovedIntents] = useState<Set<string>>(new Set());
-  const { error: actionError, busy, run } = useAdminAction(onAuthError);
+  const { error: actionError, busy, run, dialog } = useAdminAction(onAuthError);
 
   const { data: listData } = useAdminQuery(() => client.listInsightsReports(), onAuthError, []);
   const { data: gapsData } = useAdminQuery(() => client.getKnowledgeGaps(14), onAuthError, []);
   const gaps = gapsData?.gaps ?? [];
-  const { data: reportData, loading, error } = useAdminQuery(
+
+  // Group the stored reports by horizon so the picker can offer Daily / Weekly /
+  // Monthly, each with its own list of periods (newest first).
+  const byHorizon = useMemo(() => {
+    const map: Record<string, InsightsReportItem[]> = {};
+    for (const r of listData?.reports ?? []) (map[r.period_type] ??= []).push(r);
+    return map;
+  }, [listData]);
+  const availableHorizons = HORIZONS.filter((h) => byHorizon[h]?.length);
+  const hasReports = (listData?.reports?.length ?? 0) > 0;
+
+  // Effective selection: the user's pick, else default to the newest stored report.
+  const effectiveHorizon = horizon || listData?.reports?.[0]?.period_type || "";
+  const periods = byHorizon[effectiveHorizon] ?? [];
+  const effectiveId = selectedId || periods[0]?.report_id || "";
+
+  function pickHorizon(next: string) {
+    setHorizon(next);
+    setSelectedId(byHorizon[next]?.[0]?.report_id ?? "");
+  }
+
+  const { data: reportData, loading, error } = useAdminQuery<{ report: InsightsReport | null }>(
     () =>
-      selectedId
-        ? client.getInsightsReport(selectedId).then((report) => ({ report }))
-        : client.getLatestInsights(),
+      effectiveId
+        ? client.getInsightsReport(effectiveId).then((report) => ({ report }))
+        : Promise.resolve({ report: null }),
     onAuthError,
-    [selectedId],
+    [effectiveId],
   );
   const report = reportData?.report ?? null;
 
@@ -166,111 +244,185 @@ export default function Insights({
   }
 
   function handleApprove(intent: string) {
-    run(
-      "Reason for approving this proposed FAQ (audited). It becomes searchable once approved:",
-      (reason) => client.approveCanonical(intent, reason),
-      () => setApprovedIntents((prev) => new Set(prev).add(intent)),
-    );
+    run({
+      title: "Approve FAQ",
+      message: "Approve this proposed FAQ? It becomes searchable once approved.",
+      defaultReason: "Approved proposed FAQ via admin console",
+      confirmLabel: "Approve",
+      action: (reason) => client.approveCanonical(intent, reason),
+      onSuccess: () => setApprovedIntents((prev) => new Set(prev).add(intent)),
+    });
   }
+
+  const runNowButton = (
+    <button
+      type="button"
+      className="admin-btn admin-btn-primary"
+      disabled={running}
+      onClick={handleRun}
+    >
+      {running ? "Queuing…" : "Run now"}
+    </button>
+  );
+
+  const reportMeta = report
+    ? `${report.period_key} · ${
+        report.conversations_in_period > report.conversations_analyzed
+          ? `${report.conversations_analyzed} of ${report.conversations_in_period} conversations (sampled)`
+          : `${report.conversations_analyzed} conversations`
+      } · generated ${fmtGenerated(report.generated_at)}`
+    : null;
 
   return (
     <div>
-      <div className="admin-filters">
-        <label>
-          Report{" "}
-          <select value={selectedId} onChange={(e) => setSelectedId(e.target.value)}>
-            <option value="">Latest</option>
-            {(listData?.reports ?? []).map((r) => (
-              <option key={r.report_id} value={r.report_id}>
-                {r.period_type} {r.period_key} ({r.cluster_count} clusters)
-              </option>
-            ))}
-          </select>
-        </label>
-        {isAdmin && (
-          <button type="button" className="admin-signout" disabled={running} onClick={handleRun}>
-            {running ? "Queuing…" : "Run now"}
-          </button>
-        )}
-      </div>
+      {dialog}
+      <p className="admin-page-intro">
+        Insights cluster recent visitor questions into themes, flag which are already covered by
+        an approved answer, and propose FAQs for the gaps. Each run is saved as a report for its
+        period — use the Daily / Weekly / Monthly picker to browse past ones. “Run now”
+        regenerates the current period (via the background worker).
+      </p>
 
-      {runMsg && <p className="admin-muted">{runMsg}</p>}
-      {actionError && <p className="admin-error">{actionError}</p>}
-
-      {gapsData && (
-        <section className="admin-gaps">
-          <h3>Top knowledge gaps · last {gapsData.window_days} days</h3>
-          {gaps.length === 0 ? (
-            <p className="admin-muted">
-              {gapsData.daily_reports === 0
-                ? "No daily reports yet — gaps appear once the daily insights run has data."
-                : "No uncovered question themes in this window 🎉"}
-            </p>
-          ) : (
-            <ol className="admin-gap-list">
-              {gaps.map((g, i) => (
-                <GapRow
-                  key={g.key}
-                  gap={g}
-                  rank={i + 1}
-                  isAdmin={isAdmin}
-                  busy={busy}
-                  approved={
-                    g.proposed_canonical_intent
-                      ? approvedIntents.has(g.proposed_canonical_intent)
-                      : false
-                  }
-                  onApprove={handleApprove}
-                />
-              ))}
-            </ol>
-          )}
-        </section>
-      )}
-
-      {loading && <p className="admin-muted">Loading insights…</p>}
-      {error && <p className="admin-error">{error}</p>}
-      {!loading && report === null && (
-        <p className="admin-muted">
-          No insights report yet.{isAdmin ? " Click “Run now” to generate one." : ""}
-        </p>
-      )}
-
-      {report && (
-        <div>
-          <p className="admin-muted">
-            {report.period_type} {report.period_key} ·{" "}
-            {report.conversations_in_period > report.conversations_analyzed
-              ? `${report.conversations_analyzed} of ${report.conversations_in_period} conversations (sampled)`
-              : `${report.conversations_analyzed} conversations`}{" "}
-            · generated {report.generated_at}
-          </p>
-          <div className="admin-card">
-            <h3>Summary</h3>
-            <p className="admin-content">{report.summary}</p>
-          </div>
-          {report.clusters.length === 0 ? (
-            <p className="admin-muted">No notable question clusters in this period.</p>
-          ) : (
-            <div className="admin-card-grid">
-              {report.clusters.map((c, i) => (
-                <ClusterCard
-                  key={i}
-                  cluster={c}
-                  isAdmin={isAdmin}
-                  busy={busy}
-                  approved={
-                    c.proposed_canonical_intent
-                      ? approvedIntents.has(c.proposed_canonical_intent)
-                      : false
-                  }
-                  onApprove={handleApprove}
-                />
+      <div className="admin-toolbar">
+        {hasReports ? (
+          <>
+            <div className="admin-segmented" role="group" aria-label="Report horizon">
+              {availableHorizons.map((h) => (
+                <button
+                  key={h}
+                  type="button"
+                  className={h === effectiveHorizon ? "admin-seg is-active" : "admin-seg"}
+                  aria-pressed={h === effectiveHorizon}
+                  onClick={() => pickHorizon(h)}
+                >
+                  {HORIZON_LABEL[h]}
+                </button>
               ))}
             </div>
-          )}
+            <label>
+              <span>Period</span>
+              <select value={effectiveId} onChange={(e) => setSelectedId(e.target.value)}>
+                {periods.map((r) => (
+                  <option key={r.report_id} value={r.report_id}>
+                    {periodLabel(r)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </>
+        ) : (
+          <span className="admin-muted">No stored reports yet.</span>
+        )}
+        <span className="admin-toolbar-spacer" />
+        {isAdmin && runNowButton}
+      </div>
+
+      {runMsg && <div className="admin-notice admin-notice-success">{runMsg}</div>}
+      {actionError && <div className="admin-notice admin-notice-error">{actionError}</div>}
+
+      <section className="admin-section">
+        <div className="admin-section-head">
+          <h3 className="admin-section-title">Top knowledge gaps</h3>
+          {gapsData && <span className="admin-section-sub">last {gapsData.window_days} days</span>}
         </div>
-      )}
+        {!gapsData ? (
+          <p className="admin-muted">Loading knowledge gaps…</p>
+        ) : gaps.length === 0 ? (
+          <EmptyState
+            icon="unresolved"
+            title={
+              gapsData.daily_reports === 0
+                ? "No daily reports yet"
+                : "No uncovered question themes"
+            }
+            hint={
+              gapsData.daily_reports === 0
+                ? "Knowledge gaps rank the recurring questions your bot couldn’t confidently answer. They appear once the daily insights job (background worker) has recorded a few days of conversations."
+                : "Every recurring question in this window is already covered by an approved answer."
+            }
+          />
+        ) : (
+          <ol className="admin-gap-list">
+            {gaps.map((g, i) => (
+              <GapRow
+                key={g.key}
+                gap={g}
+                rank={i + 1}
+                isAdmin={isAdmin}
+                busy={busy}
+                approved={
+                  g.proposed_canonical_intent
+                    ? approvedIntents.has(g.proposed_canonical_intent)
+                    : false
+                }
+                onApprove={handleApprove}
+              />
+            ))}
+          </ol>
+        )}
+      </section>
+
+      <section className="admin-section">
+        <div className="admin-section-head">
+          <h3 className="admin-section-title">
+            {report ? `${cap(report.period_type)} report` : "Report"}
+          </h3>
+          {reportMeta && <span className="admin-section-sub">{reportMeta}</span>}
+        </div>
+
+        {loading ? (
+          <p className="admin-muted">Loading insights…</p>
+        ) : error ? (
+          <div className="admin-notice admin-notice-error">{error}</div>
+        ) : report === null ? (
+          <EmptyState
+            icon="insights"
+            title="No insights report yet"
+            hint={
+              isAdmin
+                ? "Click “Run now” to cluster your recent conversations into themes. Generation runs in the background worker and takes about a minute — reload after it finishes. (If nothing ever appears, make sure the worker process is running.)"
+                : "Reports appear here once the background worker has generated one."
+            }
+            action={isAdmin ? runNowButton : null}
+          />
+        ) : (
+          <div className="admin-report-body">
+            <div className="admin-card">
+              <h3>Summary</h3>
+              <p className="admin-content">{report.summary}</p>
+            </div>
+            {report.clusters.length === 0 ? (
+              <EmptyState
+                icon="conversations"
+                title="No notable question clusters"
+                hint="This period didn’t have enough repeated questions to form a theme."
+              />
+            ) : (
+              <>
+                <div className="admin-subhead">
+                  Question clusters ({report.clusters.length})
+                </div>
+                <div className="admin-card-grid">
+                  {report.clusters.map((c, i) => (
+                    <ClusterCard
+                      key={i}
+                      cluster={c}
+                      isAdmin={isAdmin}
+                      busy={busy}
+                      approved={
+                        c.proposed_canonical_intent
+                          ? approvedIntents.has(c.proposed_canonical_intent)
+                          : false
+                      }
+                      onApprove={handleApprove}
+                    />
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </section>
     </div>
   );
 }

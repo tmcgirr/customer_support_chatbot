@@ -39,12 +39,12 @@
 }
 
 .rf-warning {
-  background: rgba(251, 191, 36, 0.1);
-  border: 1px solid rgba(251, 191, 36, 0.4);
+  background: rgba(180, 120, 0, 0.1);
+  border: 1px solid rgba(180, 120, 0, 0.35);
   border-radius: var(--cadre-radius-sm);
   padding: 0.6rem 0.75rem;
   margin: 0 0 1rem;
-  color: #fcd34d;
+  color: #8a5a00;
 }
 
 .rf-form,
@@ -182,12 +182,12 @@
 }
 
 .rf-btn-primary {
-  background: var(--cadre-accent);
-  color: var(--cadre-accent-contrast);
+  background: var(--cadre-primary);
+  color: var(--cadre-primary-contrast);
 }
 
 .rf-btn-primary:hover:not(:disabled) {
-  background: var(--cadre-accent-hover);
+  background: var(--cadre-primary-hover);
 }
 
 .rf-btn-ghost {
@@ -207,13 +207,13 @@
 }
 
 .rf-success {
-  color: #34d399;
+  color: #1a7f37;
   font-weight: 600;
   margin: 0;
 }
 
 .rf-notice {
-  color: #fcd34d;
+  color: #8a5a00;
   margin: 0;
 }
 

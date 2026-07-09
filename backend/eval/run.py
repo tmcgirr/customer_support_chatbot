@@ -32,6 +32,7 @@ import yaml
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 
 from app.agent.adapter import (
+    AnthropicMessagesAdapter,
     Completed,
     InputItem,
     ModelAdapter,
@@ -71,10 +72,10 @@ class _PlumbingAdapter:
         yield TextDelta(text="Plumbing-mode response.")
         yield Completed(usage=None)
 
-    async def classify(self, *, instructions: str, text: str) -> str:
+    async def classify(self, *, instructions: str, text: str, category: str = "classify") -> str:
         return "{}"
 
-    async def embed(self, texts: list[str]) -> list[list[float]]:
+    async def embed(self, texts: list[str], *, category: str = "embeddings") -> list[list[float]]:
         return [[0.0] for _ in texts]
 
 
@@ -155,6 +156,16 @@ def _build_adapter(config: EvalConfig, *, fake: bool, adapter: ModelAdapter | No
         return adapter
     if fake:
         return _PlumbingAdapter()
+    if config.provider == "anthropic":
+        return AnthropicMessagesAdapter(model=config.model, fallback_model=config.fallback_model)
+    if config.provider == "openrouter":
+        settings = get_settings()
+        return OpenAIResponsesAdapter(
+            api_key=settings.openrouter_api_key.get_secret_value(),
+            base_url=settings.openrouter_base_url,
+            model=config.model or settings.openrouter_model,
+            fallback_model=config.fallback_model,
+        )
     return OpenAIResponsesAdapter(model=config.model, fallback_model=config.fallback_model)
 
 
@@ -235,6 +246,7 @@ async def main(
     json_out: str = "",
     model: str = "",
     prompt_version: str = "",
+    provider: str = "",
 ) -> int:
     settings = get_settings()
     client: AsyncIOMotorClient[dict[str, Any]] = AsyncIOMotorClient(
@@ -254,11 +266,20 @@ async def main(
         gated = False  # comparison is exploratory dev tooling, not the CI gate
     else:
         base = current_config()
+        # A one-off --provider override with no --model defaults to that provider's
+        # configured model, so `--provider anthropic` alone targets the Claude config.
+        if provider == "anthropic":
+            provider_model = settings.anthropic_model
+        elif provider == "openrouter":
+            provider_model = settings.openrouter_model
+        else:
+            provider_model = settings.openai_model
         configs = [
             EvalConfig(
-                name="override" if (model or prompt_version) else base.name,
-                model=model or base.model,
-                fallback_model=base.fallback_model,
+                name="override" if (model or prompt_version or provider) else base.name,
+                provider=provider or base.provider,
+                model=model or (provider_model if provider else base.model),
+                fallback_model=base.fallback_model if not provider else None,
                 prompt_version=prompt_version or base.prompt_version,
             )
         ]
@@ -307,6 +328,12 @@ def _cli() -> int:
     parser.add_argument(
         "--prompt-version", default="", help="Override the system-prompt version for a one-off run"
     )
+    parser.add_argument(
+        "--provider",
+        default="",
+        choices=["", "openai", "anthropic", "openrouter"],
+        help="Override the model provider for a one-off run (defaults to that provider's model)",
+    )
     args = parser.parse_args()
     return asyncio.run(
         main(
@@ -319,6 +346,7 @@ def _cli() -> int:
             json_out=args.json_out,
             model=args.model,
             prompt_version=args.prompt_version,
+            provider=args.provider,
         )
     )
 

@@ -42,12 +42,12 @@ $EDITOR deploy/prod.env    # MONGO_URI, OPENAI_* (prod project+store), SESSION_S
 docker run --rm -v "$PWD/frontend":/w -w /w node:20 sh -c \
   "npm i -g pnpm@9 && pnpm install --frozen-lockfile && \
    VITE_API_BASE=https://$PROD_DOMAIN \
-   VITE_ALLOWED_ORIGINS=https://www.cadre.ai,https://cadre.ai \
-   VITE_PRIVACY_URL=https://cadre.ai/privacy \
-   VITE_PORTAL_URL=https://portal.cadre.ai pnpm build"
+   VITE_ALLOWED_ORIGINS=https://www.cadreai.com,https://cadreai.com \
+   VITE_PRIVACY_URL=https://www.cadreai.com/legal/privacy-policy \
+   VITE_PORTAL_URL=https://portal.cadreai.com pnpm build"
 
 # 3. Bring up the stack with 2 API replicas behind the load-balancing Caddy.
-export PROD_DOMAIN=chat.cadre.ai
+export PROD_DOMAIN=chat.cadreai.com
 docker compose -f deploy/docker-compose.prod.yml --env-file deploy/prod.env \
   up -d --build --scale api=2
 

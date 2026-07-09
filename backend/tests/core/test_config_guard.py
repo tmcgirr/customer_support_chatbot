@@ -9,11 +9,14 @@ from app.core.config import Settings
 _PROD: dict[str, object] = {
     "env": "prod",
     "session_secret": SecretStr("real-session-secret"),
-    "admin_password": SecretStr("real-admin-pw"),
+    "admin_password": SecretStr("real-admin-password"),  # >= 16 chars (no lockout yet)
     "openai_api_key": SecretStr("live-key-placeholder"),
     "openai_vector_store_id": "vs_real",
     "mongo_uri": SecretStr("mongodb://user:pw@prod-host:27017/cadre"),
-    "cors_origins": "https://cadre.ai",
+    "cors_origins": "https://cadreai.com",
+    # Pin viewer OFF so the ambient test-env VIEWER_PASSWORD doesn't bleed into these
+    # prod-config assertions; individual tests override it where relevant.
+    "viewer_password": SecretStr(""),
 }
 
 
@@ -57,6 +60,10 @@ def test_invalid_env_rejected() -> None:
         ("openai_vector_store_id", "vs_PROD_REPLACE_ME", "OPENAI_VECTOR_STORE_ID"),
         # A too-short session secret (real-looking but weak entropy) is also rejected.
         ("session_secret", SecretStr("short"), "SESSION_SECRET"),
+        # Admin/viewer passwords must clear the 16-char floor (no login lockout yet —
+        # SECURITY_REVIEW_V1 H2/L11); a real-looking but short one is rejected.
+        ("admin_password", SecretStr("short-real-pw"), "ADMIN_PASSWORD"),
+        ("viewer_password", SecretStr("short-real-pw"), "VIEWER_PASSWORD"),
     ],
 )
 def test_prod_rejects_missing_or_default_input(field: str, value: object, needle: str) -> None:
@@ -70,7 +77,7 @@ def test_prod_allows_empty_viewer_password() -> None:
 
 
 def test_prod_accepts_real_viewer_password() -> None:
-    assert _build(**{**_PROD, "viewer_password": SecretStr("real-viewer-pw")}).env == "prod"
+    assert _build(**{**_PROD, "viewer_password": SecretStr("real-viewer-password")}).env == "prod"
 
 
 def test_prod_rejects_real_transport_without_config() -> None:
@@ -94,6 +101,46 @@ def test_dev_allows_unconfigured_real_transport() -> None:
     assert _build(env="dev", delivery_transport="webhook").delivery_transport == "webhook"
 
 
+def test_prod_openai_default_does_not_require_anthropic_key() -> None:
+    # An OpenAI-only prod deploy must NOT be forced to hold an Anthropic key.
+    assert _build(**{**_PROD, "anthropic_api_key": SecretStr("")}).model_provider == "openai"
+
+
+def test_prod_anthropic_default_requires_anthropic_key() -> None:
+    # When Claude is the startup provider, its key is required (fail closed).
+    with pytest.raises((ValueError, SettingsError), match="ANTHROPIC_API_KEY"):
+        _build(**{**_PROD, "model_provider": "anthropic", "anthropic_api_key": SecretStr("")})
+
+
+def test_prod_accepts_anthropic_default_with_key() -> None:
+    s = _build(
+        **{
+            **_PROD,
+            "model_provider": "anthropic",
+            "anthropic_api_key": SecretStr("live-anthropic-key"),
+        }
+    )
+    assert s.model_provider == "anthropic"
+
+
+def test_prod_openrouter_default_requires_openrouter_key() -> None:
+    # When OpenRouter is the startup provider, its key is required (fail closed).
+    with pytest.raises((ValueError, SettingsError), match="OPENROUTER_API_KEY"):
+        _build(**{**_PROD, "model_provider": "openrouter", "openrouter_api_key": SecretStr("")})
+
+
+def test_prod_accepts_openrouter_default_with_key() -> None:
+    s = _build(
+        **{**_PROD, "model_provider": "openrouter", "openrouter_api_key": SecretStr("sk-or-live")}
+    )
+    assert s.model_provider == "openrouter"
+
+
+def test_prod_openai_default_does_not_require_openrouter_key() -> None:
+    # An OpenAI-only prod deploy must NOT be forced to hold an OpenRouter key.
+    assert _build(**{**_PROD, "openrouter_api_key": SecretStr("")}).model_provider == "openai"
+
+
 def test_staging_is_also_validated() -> None:
     # staging is not dev, so it enforces the same production inputs.
     with pytest.raises((ValueError, SettingsError), match="OPENAI_API_KEY"):
@@ -102,7 +149,7 @@ def test_staging_is_also_validated() -> None:
 
 @pytest.mark.parametrize(
     "cors",
-    ["*", "https://cadre.ai,http://localhost:5273", "http://cadre.ai", "https://localhost"],
+    ["*", "https://cadreai.com,http://localhost:5273", "http://cadreai.com", "https://localhost"],
 )
 def test_prod_rejects_unsafe_cors(cors: str) -> None:
     # "*", any http/localhost origin, or a real origin with a leftover dev origin.

@@ -2,6 +2,8 @@ import { useRef, useState } from "react";
 
 import type { AdminClient, AdminRole, KnowledgeSource } from "./api";
 import { AdminAuthError, AdminForbiddenError } from "./api";
+import KnowledgeViewer from "./KnowledgeViewer";
+import { distinct, FilterSelect, SortHeader, useSort } from "./tableControls";
 import { useAdminAction } from "./useAdminAction";
 import { useAdminQuery } from "./useAdminQuery";
 
@@ -14,6 +16,12 @@ function indexingLabel(status: string, approved: boolean): string {
   if (status === "pending") return "Indexing…";
   return status;
 }
+
+const SORT: Record<string, (s: KnowledgeSource) => string | number | null | undefined> = {
+  title: (s) => s.title,
+  category: (s) => s.category,
+  updated_at: (s) => s.updated_at,
+};
 
 /** Upload panel (admin only): pick a file + title/category + audit reason. */
 function UploadForm({
@@ -113,8 +121,12 @@ export default function KnowledgeSources({
 }) {
   // Bump to re-fetch after a successful mutation.
   const [reloadNonce, setReloadNonce] = useState(0);
+  const [category, setCategory] = useState("");
+  const [lifecycle, setLifecycle] = useState("");
+  const [approvedFilter, setApprovedFilter] = useState("");
+  const [viewing, setViewing] = useState<KnowledgeSource | null>(null);
   const isAdmin = role === "admin";
-  const { error: actionError, busy, run } = useAdminAction(onAuthError);
+  const { error: actionError, busy, run, dialog } = useAdminAction(onAuthError);
 
   // Hidden file input reused for "Replace"; we stash the target source id.
   const replaceRef = useRef<HTMLInputElement>(null);
@@ -134,19 +146,26 @@ export default function KnowledgeSources({
   }
 
   function handleApprove(sourceId: string) {
-    run(
-      "Reason for approving this document (audited). Approving makes it searchable:",
-      (reason) => client.approveKnowledge(sourceId, reason),
-      refetch,
-    );
+    run({
+      title: "Approve document",
+      message: "Approve this document? Approving attaches it to the knowledge store and makes it searchable.",
+      defaultReason: "Approved document via admin console",
+      confirmLabel: "Approve",
+      action: (reason) => client.approveKnowledge(sourceId, reason),
+      onSuccess: refetch,
+    });
   }
 
   function handleRemove(sourceId: string) {
-    run(
-      "Reason for removing this document (audited). Removing stops it being served:",
-      (reason) => client.removeKnowledge(sourceId, reason),
-      refetch,
-    );
+    run({
+      title: "Remove document",
+      message: "Remove this document? It stops being served by retrieval.",
+      defaultReason: "Removed document via admin console",
+      confirmLabel: "Remove",
+      danger: true,
+      action: (reason) => client.removeKnowledge(sourceId, reason),
+      onSuccess: refetch,
+    });
   }
 
   function startReplace(sourceId: string) {
@@ -161,17 +180,38 @@ export default function KnowledgeSources({
     event.target.value = "";
     replaceTarget.current = null;
     if (!file || !sourceId) return;
-    run(
-      "Reason for replacing this document (audited). The new file needs re-approval:",
-      (reason) => client.replaceKnowledge(sourceId, file, reason),
-      refetch,
-    );
+    run({
+      title: "Replace document",
+      message: "Replace this document with the selected file? The new file needs re-approval before it serves.",
+      defaultReason: "Replaced document via admin console",
+      confirmLabel: "Replace",
+      action: (reason) => client.replaceKnowledge(sourceId, file, reason),
+      onSuccess: refetch,
+    });
   }
 
   const colCount = isAdmin ? 8 : 7;
 
+  const all = data?.sources ?? [];
+  const filtered = all.filter(
+    (s) =>
+      (!category || s.category === category) &&
+      (!lifecycle || s.lifecycle === lifecycle) &&
+      (!approvedFilter || (s.approved ? "Yes" : "No") === approvedFilter),
+  );
+  const { sorted, sort, toggle } = useSort(filtered, SORT, { key: "updated_at", dir: "desc" });
+
   return (
     <div>
+      {dialog}
+      {viewing && (
+        <KnowledgeViewer
+          client={client}
+          source={viewing}
+          onClose={() => setViewing(null)}
+          onAuthError={onAuthError}
+        />
+      )}
       {isAdmin && <UploadForm onUpload={handleUpload} onAuthError={onAuthError} />}
       {/* Hidden input driving per-row "Replace". */}
       <input
@@ -184,32 +224,67 @@ export default function KnowledgeSources({
       {loading && <p className="admin-muted">Loading knowledge documents…</p>}
       {error && <p className="admin-error">{error}</p>}
       {data && (
-        <table className="admin-table">
-          <thead>
-            <tr>
-              <th>Title</th>
-              <th>Category</th>
-              <th>Approved</th>
-              <th>Lifecycle</th>
-              <th>Indexing</th>
-              <th>Owner</th>
-              <th>Updated</th>
-              {isAdmin && <th>Actions</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {data.sources.length === 0 ? (
-              <tr>
-                <td colSpan={colCount} className="admin-muted">
-                  No knowledge documents.
-                </td>
-              </tr>
-            ) : (
-              data.sources.map((s: KnowledgeSource) => {
+        <>
+          <div className="admin-filters">
+            <FilterSelect
+              label="Category"
+              value={category}
+              options={distinct(all, (s) => s.category)}
+              onChange={setCategory}
+            />
+            <FilterSelect
+              label="Lifecycle"
+              value={lifecycle}
+              options={distinct(all, (s) => s.lifecycle)}
+              onChange={setLifecycle}
+            />
+            <FilterSelect
+              label="Approved"
+              value={approvedFilter}
+              options={["Yes", "No"]}
+              onChange={setApprovedFilter}
+            />
+            <span className="admin-muted">
+              {sorted.length} of {all.length}
+            </span>
+          </div>
+
+          <div className="admin-tablewrap">
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <SortHeader label="Title" sortKey="title" sort={sort} onToggle={toggle} />
+                  <SortHeader label="Category" sortKey="category" sort={sort} onToggle={toggle} />
+                  <th>Approved</th>
+                  <th>Lifecycle</th>
+                  <th>Indexing</th>
+                  <th>Owner</th>
+                  <SortHeader label="Updated" sortKey="updated_at" sort={sort} onToggle={toggle} />
+                  {isAdmin && <th className="admin-col-sticky">Actions</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.length === 0 ? (
+                  <tr>
+                    <td colSpan={colCount} className="admin-muted">
+                      No knowledge documents.
+                    </td>
+                  </tr>
+                ) : (
+                  sorted.map((s: KnowledgeSource) => {
                 const active = s.lifecycle === "active";
                 return (
                   <tr key={s.source_id}>
-                    <td>{s.title}</td>
+                    <td>
+                      <button
+                        type="button"
+                        className="admin-link"
+                        title="View document"
+                        onClick={() => setViewing(s)}
+                      >
+                        {s.title}
+                      </button>
+                    </td>
                     <td>{s.category}</td>
                     <td>{s.approved ? "Yes" : "No"}</td>
                     <td>{s.lifecycle}</td>
@@ -219,7 +294,7 @@ export default function KnowledgeSources({
                     <td>{s.owner}</td>
                     <td>{s.updated_at}</td>
                     {isAdmin && (
-                      <td>
+                      <td className="admin-col-sticky">
                         {active && !s.approved && (
                           <button
                             type="button"
@@ -254,10 +329,12 @@ export default function KnowledgeSources({
                     )}
                   </tr>
                 );
-              })
-            )}
-          </tbody>
-        </table>
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </div>
   );

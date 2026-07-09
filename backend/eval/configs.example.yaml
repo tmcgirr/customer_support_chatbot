@@ -3,17 +3,28 @@
 #
 #   uv run python -m eval.run --compare eval/configs.example.yaml --report eval/report.html
 #
-# Vary any of: model, fallback_model, prompt_version (drop a new sys-vN.md in
-# app/agent/prompts/ to A-B a rebuilt system message / routing instructions).
+# Vary any of: provider (openai|anthropic, default openai), model, fallback_model,
+# prompt_version (drop a new sys-vN.md in app/agent/prompts/ to A-B a rebuilt system
+# message / routing instructions).
 
 - name: baseline
+  provider: openai
   model: gpt-5.4-mini
   prompt_version: sys-v1
 
 - name: bigger-model
+  provider: openai
   model: gpt-5.4
   prompt_version: sys-v1
 
 - name: new-prompt
+  provider: openai
   model: gpt-5.4-mini
   prompt_version: sys-v1   # ← point at a new sys-v2.md once you've drafted one
+
+# Cross-provider A-B: gate the Claude config on the SAME golden set before switching to it
+# in the admin portal (invariant #15). Needs ANTHROPIC_API_KEY set.
+- name: claude
+  provider: anthropic
+  model: claude-haiku-4-5   # low-cost default; swap to claude-sonnet-5 / claude-opus-4-8 to A-B up
+  prompt_version: sys-v1

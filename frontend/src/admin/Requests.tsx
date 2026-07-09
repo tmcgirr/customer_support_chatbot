@@ -1,11 +1,18 @@
 import { Fragment, useState } from "react";
 
-import type { AdminClient, AdminRole, RevealedRequest } from "./api";
+import type { AdminClient, AdminRequest, AdminRole, RevealedRequest } from "./api";
+import { SortHeader, useSort } from "./tableControls";
 import { useAdminAction } from "./useAdminAction";
 import { useAdminQuery } from "./useAdminQuery";
 
 const TYPE_OPTIONS = ["strategy_call", "portal_support", "human_escalation"];
 const STATUS_OPTIONS = ["received", "delivering", "delivered", "delivery_failed"];
+
+const SORT: Record<string, (r: AdminRequest) => string | number | null | undefined> = {
+  type: (r) => r.type,
+  status: (r) => r.status,
+  created_at: (r) => r.created_at,
+};
 
 function formatField(value: unknown): string {
   if (value === null || value === undefined) return "—";
@@ -30,7 +37,7 @@ export default function Requests({
   const [revealed, setRevealed] = useState<Record<string, RevealedRequest>>({});
 
   const isAdmin = role === "admin";
-  const { error: actionError, busy, run } = useAdminAction(onAuthError);
+  const { error: actionError, busy, run, dialog } = useAdminAction(onAuthError);
 
   const { data, loading, error } = useAdminQuery(
     () =>
@@ -43,25 +50,36 @@ export default function Requests({
   );
 
   function handleReveal(id: string) {
-    run(
-      "Reason for revealing this request's contact details (audited):",
-      (reason) => client.revealRequest(id, reason),
-      (result) => setRevealed((prev) => ({ ...prev, [id]: result })),
-    );
+    run({
+      title: "Reveal contact details",
+      message: "Reveal this request's unmasked contact details?",
+      defaultReason: "Revealed contact details via admin console",
+      confirmLabel: "Reveal",
+      action: (reason) => client.revealRequest(id, reason),
+      onSuccess: (result) => setRevealed((prev) => ({ ...prev, [id]: result })),
+    });
   }
 
   function handleRedeliver(id: string) {
-    run(
-      "Reason for redelivering this request (audited):",
-      (reason) => client.redeliver(id, reason),
-      () => setReloadNonce((n) => n + 1),
-    );
+    run({
+      title: "Redeliver request",
+      message: "Re-attempt delivery of this request to its destination?",
+      defaultReason: "Redelivered via admin console",
+      confirmLabel: "Redeliver",
+      action: (reason) => client.redeliver(id, reason),
+      onSuccess: () => setReloadNonce((n) => n + 1),
+    });
   }
 
+  const { sorted, sort, toggle } = useSort(data?.requests ?? [], SORT, {
+    key: "created_at",
+    dir: "desc",
+  });
   const colCount = isAdmin ? 12 : 11;
 
   return (
     <div>
+      {dialog}
       <div className="admin-filters">
         <label>
           Type{" "}
@@ -91,32 +109,33 @@ export default function Requests({
       {loading && <p className="admin-muted">Loading requests…</p>}
       {error && <p className="admin-error">{error}</p>}
       {data && (
+        <div className="admin-tablewrap">
         <table className="admin-table">
           <thead>
             <tr>
               <th>Reference</th>
-              <th>Type</th>
-              <th>Status</th>
+              <SortHeader label="Type" sortKey="type" sort={sort} onToggle={toggle} />
+              <SortHeader label="Status" sortKey="status" sort={sort} onToggle={toggle} />
               <th>Contact email</th>
               <th>Company</th>
               <th>Destination</th>
               <th>Channel</th>
               <th>External ref</th>
               <th>Last delivery error</th>
-              <th>Created</th>
+              <SortHeader label="Created" sortKey="created_at" sort={sort} onToggle={toggle} />
               <th>Conversation ID</th>
-              {isAdmin && <th>Actions</th>}
+              {isAdmin && <th className="admin-col-sticky">Actions</th>}
             </tr>
           </thead>
           <tbody>
-            {data.requests.length === 0 ? (
+            {sorted.length === 0 ? (
               <tr>
                 <td colSpan={colCount} className="admin-muted">
                   No requests.
                 </td>
               </tr>
             ) : (
-              data.requests.map((r) => {
+              sorted.map((r) => {
                 const unmasked = revealed[r.request_id];
                 return (
                   <Fragment key={r.request_id}>
@@ -133,7 +152,7 @@ export default function Requests({
                       <td>{r.created_at}</td>
                       <td>{r.conversation_id}</td>
                       {isAdmin && (
-                        <td>
+                        <td className="admin-col-sticky">
                           <button
                             type="button"
                             className="admin-link"
@@ -182,6 +201,7 @@ export default function Requests({
             )}
           </tbody>
         </table>
+      </div>
       )}
     </div>
   );

@@ -107,6 +107,8 @@ async def test_streams_text_then_completed_with_usage() -> None:
     # Stateless: store must be disabled.
     assert client.responses.last_request is not None
     assert client.responses.last_request["store"] is False
+    # Every response is bounded by the per-response output-token ceiling (L1).
+    assert client.responses.last_request["max_output_tokens"] > 0
 
 
 async def test_refusal_delta_is_surfaced_as_text() -> None:
@@ -337,6 +339,42 @@ async def test_non_model_adapter_error_is_not_retried_on_fallback() -> None:
     with pytest.raises(AdapterError):
         [e async for e in adapter.send(instructions="s", messages=[])]
     assert responses.models_called == ["primary"]  # no fallback for a non-model error
+
+
+class _FakeEmbeddings:
+    """Records embeddings.create() calls and returns fixed vectors."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def create(self, **kwargs: Any) -> Any:
+        self.calls += 1
+        return ev(data=[ev(embedding=[0.1, 0.2])], usage=ev(prompt_tokens=3))
+
+
+async def test_embed_uses_a_dedicated_embed_client_on_the_proxy_path() -> None:
+    # OpenRouter/proxy path (base_url set): the chat client has NO `.embeddings`, so a wrong
+    # route would AttributeError. embed() must go to the injected OpenAI embed client instead.
+    chat = _FakeClient([ev(type="response.completed", response=ev(usage=None))])
+    embed = SimpleNamespace(embeddings=_FakeEmbeddings())
+    adapter = OpenAIResponsesAdapter(client=chat, embed_client=embed, model="m")  # type: ignore[arg-type]
+    assert await adapter.embed(["a"]) == [[0.1, 0.2]]
+    assert embed.embeddings.calls == 1
+
+
+async def test_embed_reuses_the_chat_client_when_not_proxied() -> None:
+    # Default (real OpenAI) path: the chat client IS OpenAI, so embed reuses it — no second
+    # connection is opened.
+    emb = _FakeEmbeddings()
+    combined = SimpleNamespace(
+        responses=_FakeResponses(
+            [ev(type="response.completed", response=ev(usage=None))], None, None
+        ),
+        embeddings=emb,
+    )
+    adapter = OpenAIResponsesAdapter(client=combined, model="m")  # type: ignore[arg-type]
+    assert await adapter.embed(["a"]) == [[0.1, 0.2]]
+    assert emb.calls == 1
 
 
 async def test_stream_is_closed_after_run() -> None:

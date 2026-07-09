@@ -75,7 +75,9 @@ class ConversationSummarizer:
             )
         try:
             raw = await asyncio.wait_for(
-                self._adapter.classify(instructions=SUMMARY_INSTRUCTIONS, text=transcript),
+                self._adapter.classify(
+                    instructions=SUMMARY_INSTRUCTIONS, text=transcript, category="summary"
+                ),
                 timeout=self._classify_timeout,
             )
         except (AdapterError, TimeoutError):

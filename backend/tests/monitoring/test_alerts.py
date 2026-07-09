@@ -62,3 +62,16 @@ def test_multiple_alerts_stack() -> None:
         "privacy_erasures_failed",
         "job_queue_backlog",
     }
+
+
+def test_budget_alert_fires_at_or_over_budget() -> None:
+    alerts = _ev(llm_spend_usd=120.0, llm_budget_usd=100.0)
+    assert len(alerts) == 1
+    a = alerts[0]
+    assert a.name == "llm_budget_exceeded" and a.severity == "warning"
+    assert a.count == 120 and a.threshold == 100
+
+
+def test_budget_alert_silent_below_budget_or_when_disabled() -> None:
+    assert _ev(llm_spend_usd=50.0, llm_budget_usd=100.0) == []  # under budget
+    assert _ev(llm_spend_usd=999.0, llm_budget_usd=0.0) == []  # budget disabled (0)

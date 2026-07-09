@@ -29,3 +29,13 @@ class AggregatesRepository:
     async def latest(self) -> dict[str, Any] | None:
         docs = await self._collection.find().sort("_id", -1).limit(1).to_list(length=1)
         return docs[0] if docs else None
+
+    async def series(self, limit: int = 30) -> list[dict[str, Any]]:
+        """The most recent ``limit`` daily snapshots, ordered oldest→newest.
+
+        Feeds the admin dashboard trend chart + KPI deltas. Counts only; no PII.
+        Empty until the ``daily_aggregates`` job has recorded at least one day.
+        """
+        docs = await self._collection.find().sort("_id", -1).limit(limit).to_list(length=limit)
+        docs.reverse()
+        return docs

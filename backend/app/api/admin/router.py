@@ -5,7 +5,7 @@ embedded in a conversation transcript are shown as ``a***@acme.com``.
 """
 
 import hashlib
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
 from fastapi import APIRouter, File, Form, Query, UploadFile
@@ -13,31 +13,42 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.admin.auth import AdminDep, AdminRoleDep
 from app.api.deps import (
+    AggregatesRepoDep,
     AuditRepoDep,
     CanonicalRepoDep,
     InsightsRepoDep,
     JobRepoDep,
     KnowledgeRepoDep,
     KnowledgeStoreDep,
+    ModelProvidersDep,
     PrivacyRepoDep,
+    ProviderResolverDep,
     RepoDep,
     RequestRepoDep,
+    SettingsRepoDep,
+    UsageRepoDep,
 )
 from app.core import ids
 from app.core.config import get_settings
 from app.core.errors import AppError, ErrorCode
 from app.core.logging import get_logger
-from app.core.masking import mask_email, mask_pii_in_text
+from app.core.masking import mask_company, mask_email, mask_pii_in_text
+from app.domain.conversations.repository import ConversationRepository
 from app.domain.insights.gaps import rank_gaps
 from app.domain.insights.models import InsightsReport
 from app.domain.knowledge.models import KnowledgeSource
 from app.domain.knowledge.store import KnowledgeStore, KnowledgeStoreError
 from app.domain.monitoring.alerts import evaluate_alerts
+from app.domain.settings.models import Provider
+from app.domain.usage import service as usage_service
+from app.domain.usage.repository import LlmUsageRepository
 
 logger = get_logger("app.admin")
 
 # Cap uploaded knowledge files (markdown/text docs — a few hundred KB is plenty).
 _MAX_KNOWLEDGE_BYTES = 5 * 1024 * 1024
+# Cap the text preview we persist/serve for the admin document viewer.
+_MAX_CONTENT_CHARS = 400_000
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
@@ -61,6 +72,21 @@ class DashboardResponse(BaseModel):
     conversations: ConversationStats
     requests: RequestStats
     unresolved_questions: int
+
+
+class TrendPoint(BaseModel):
+    """One UTC-day snapshot of running totals (counts only, no PII)."""
+
+    date: str
+    conversations: int
+    requests: int
+    feedback: int
+
+
+class TrendsResponse(BaseModel):
+    """Daily count snapshots for the dashboard trend chart + KPI deltas."""
+
+    points: list[TrendPoint]
 
 
 class FunnelStage(BaseModel):
@@ -282,6 +308,18 @@ class SystemResponse(BaseModel):
     version: str
     build: str
     feature_flags: dict[str, bool]
+    active_model_provider: str  # the runtime-active chat provider (openai/anthropic)
+
+
+class ModelProviderResponse(BaseModel):
+    active: str  # currently-serving provider (persisted runtime setting or the default)
+    default: str  # the startup/env default provider
+    available: list[str]  # providers with a key configured — the selectable set
+
+
+class SetProviderBody(BaseModel):
+    provider: Provider
+    reason: str = Field(min_length=1, max_length=500)
 
 
 class MeResponse(BaseModel):
@@ -313,6 +351,85 @@ class MonitoringResponse(BaseModel):
     alerts: list[AlertEntry]
 
 
+class UsageLineResponse(BaseModel):
+    label: str  # the provider / model / category this line rolls up
+    provider: str
+    input_tokens: int
+    output_tokens: int
+    requests: int
+    cost_usd: float
+    priced: bool  # False → an unpriced model is in this line, so cost is incomplete
+
+
+class UsageProviderInfo(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
+    provider: str
+    active: bool  # currently the runtime-selected chat provider
+    configured: bool  # a key is set
+    model: str
+    key_last4: str | None  # last 4 chars — admins only; null for viewers / unconfigured
+
+
+class UsageBudgetInfo(BaseModel):
+    monthly_usd: float
+    month_to_date_usd: float
+    pct: float  # month-to-date as a % of the budget (may exceed 100)
+    over: bool
+
+
+class UsageResponse(BaseModel):
+    window_days: int
+    total_input_tokens: int
+    total_output_tokens: int
+    total_cost_usd: float
+    by_provider: list[UsageLineResponse]
+    by_model: list[UsageLineResponse]
+    by_category: list[UsageLineResponse]
+    unpriced_models: list[str]  # models with no price yet — set LLM_PRICING to value them
+    providers: list[UsageProviderInfo]
+    budget: UsageBudgetInfo | None  # null when LLM_MONTHLY_BUDGET_USD is unset (0)
+
+
+def _usage_line(line: usage_service.UsageLine) -> UsageLineResponse:
+    return UsageLineResponse(
+        label=line.label,
+        provider=line.provider,
+        input_tokens=line.input_tokens,
+        output_tokens=line.output_tokens,
+        requests=line.requests,
+        cost_usd=line.cost_usd,
+        priced=line.priced,
+    )
+
+
+def _provider_info(
+    provider: str, key: str, model: str, active: str, is_admin: bool
+) -> UsageProviderInfo:
+    key = key.strip()
+    configured = bool(key)
+    # Last-4 only, admins only, over HTTPS — never the full key, never logged (invariant #5).
+    key_last4 = key[-4:] if (configured and is_admin and len(key) >= 4) else None
+    return UsageProviderInfo(
+        provider=provider,
+        active=(provider == active),
+        configured=configured,
+        model=model,
+        key_last4=key_last4,
+    )
+
+
+async def _month_to_date_spend(
+    conversations: ConversationRepository, usage_repo: LlmUsageRepository
+) -> float:
+    """Priced LLM $ since the 1st of the current UTC month (budget bar + alert)."""
+    month_start = datetime.now(UTC).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return usage_service.total_cost(
+        await usage_repo.rows_since(month_start.date().isoformat()),
+        await conversations.usage_by_model(month_start),
+    )
+
+
 @router.get("/me", response_model=MeResponse)
 async def me(admin: AdminDep) -> MeResponse:
     """The authenticated principal + role, so the UI can hide admin-only actions."""
@@ -326,17 +443,26 @@ async def monitoring(
     request_repo: RequestRepoDep,
     jobs: JobRepoDep,
     privacy: PrivacyRepoDep,
+    usage_repo: UsageRepoDep,
 ) -> MonitoringResponse:
     """Operational counters for the alerting stack (scrape on an interval). All
     counts are IDs-only aggregates — never message content or PII (invariant #5)."""
+    settings = get_settings()
     job_counts = await jobs.counts()
     request_counts = await request_repo.count_by("status")
     privacy_counts = await privacy.counts_by_status()
+    # Month-to-date LLM spend for the budget alert — only computed when a budget is set
+    # (the two aggregations are skipped on the default, so the scrape stays cheap).
+    llm_spend = (
+        await _month_to_date_spend(repo, usage_repo) if settings.llm_monthly_budget_usd > 0 else 0.0
+    )
     alerts = evaluate_alerts(
         job_counts=job_counts,
         request_counts=request_counts,
         privacy_counts=privacy_counts,
-        queue_depth_threshold=get_settings().alert_queue_depth_threshold,
+        queue_depth_threshold=settings.alert_queue_depth_threshold,
+        llm_spend_usd=llm_spend,
+        llm_budget_usd=settings.llm_monthly_budget_usd,
     )
     return MonitoringResponse(
         jobs_by_status=job_counts,
@@ -360,8 +486,79 @@ async def monitoring(
     )
 
 
+@router.get("/usage", response_model=UsageResponse)
+async def usage(
+    admin: AdminDep,
+    repo: RepoDep,
+    usage_repo: UsageRepoDep,
+    settings_repo: SettingsRepoDep,
+    window: Annotated[int, Query(ge=1, le=365)] = 30,
+) -> UsageResponse:
+    """LLM token usage + $ cost per provider / model / category over the last ``window`` days,
+    plus the active model + masked API key per provider and a month-to-date budget bar. Chat +
+    testing usage is derived from conversation message usage (testing = eval conversations);
+    worker categories (summary/insights/labeling/embeddings) come from the llm_usage rollup.
+    Cost uses the pricing table (LLM_PRICING); unpriced models are surfaced, not hidden."""
+    settings = get_settings()
+    now = datetime.now(UTC)
+    window_start = now - timedelta(days=window)
+    breakdown = usage_service.build_breakdown(
+        await usage_repo.rows_since(window_start.date().isoformat()),
+        await repo.usage_by_model(window_start),
+    )
+
+    budget: UsageBudgetInfo | None = None
+    if settings.llm_monthly_budget_usd > 0:
+        limit = settings.llm_monthly_budget_usd
+        mtd = await _month_to_date_spend(repo, usage_repo)
+        budget = UsageBudgetInfo(
+            monthly_usd=limit,
+            month_to_date_usd=mtd,
+            pct=round(mtd / limit * 100, 1),
+            over=mtd >= limit,
+        )
+
+    active = await settings_repo.get_active_provider()
+    is_admin = admin.role == "admin"
+    providers = [
+        _provider_info(
+            "openai",
+            settings.openai_api_key.get_secret_value(),
+            settings.openai_model,
+            active,
+            is_admin,
+        ),
+        _provider_info(
+            "anthropic",
+            settings.anthropic_api_key.get_secret_value(),
+            settings.anthropic_model,
+            active,
+            is_admin,
+        ),
+        _provider_info(
+            "openrouter",
+            settings.openrouter_api_key.get_secret_value(),
+            settings.openrouter_model,
+            active,
+            is_admin,
+        ),
+    ]
+    return UsageResponse(
+        window_days=window,
+        total_input_tokens=breakdown.input_tokens,
+        total_output_tokens=breakdown.output_tokens,
+        total_cost_usd=breakdown.cost_usd,
+        by_provider=[_usage_line(line) for line in breakdown.by_provider],
+        by_model=[_usage_line(line) for line in breakdown.by_model],
+        by_category=[_usage_line(line) for line in breakdown.by_category],
+        unpriced_models=breakdown.unpriced_models,
+        providers=providers,
+        budget=budget,
+    )
+
+
 @router.get("/system", response_model=SystemResponse)
-async def system(_admin: AdminDep) -> SystemResponse:
+async def system(_admin: AdminDep, settings_repo: SettingsRepoDep) -> SystemResponse:
     """Deploy/build metadata for operators (admin-gated so the public surface
     can't fingerprint env or build)."""
     settings = get_settings()
@@ -370,7 +567,55 @@ async def system(_admin: AdminDep) -> SystemResponse:
         version=settings.app_version,
         build=settings.build_sha,
         feature_flags=settings.feature_flags,
+        active_model_provider=await settings_repo.get_active_provider(),
     )
+
+
+@router.get("/model-provider", response_model=ModelProviderResponse)
+async def get_model_provider(
+    _admin: AdminDep, settings_repo: SettingsRepoDep, providers: ModelProvidersDep
+) -> ModelProviderResponse:
+    """The active chat model provider + the selectable set (admin or viewer)."""
+    active = await settings_repo.get_active_provider()
+    return ModelProviderResponse(
+        active=active, default=providers.default, available=list(providers.available)
+    )
+
+
+@router.post("/model-provider", response_model=ActionResponse)
+async def set_model_provider(
+    body: SetProviderBody,
+    admin: AdminRoleDep,
+    settings_repo: SettingsRepoDep,
+    providers: ModelProvidersDep,
+    resolver: ProviderResolverDep,
+    audit: AuditRepoDep,
+) -> ActionResponse:
+    """Switch the active chat model provider (admin only, reason required, audited). Only a
+    provider whose key is configured may be selected; promoting a model config should still
+    be gated by the golden set on the target provider (invariant #15)."""
+    # Reject an unavailable provider BEFORE auditing/mutating — a known-but-unconfigured
+    # provider is a 400 (an unknown value is already rejected as 422 by the Provider type).
+    if body.provider not in providers.available:
+        raise AppError(
+            ErrorCode.INVALID_REQUEST, f"Model provider {body.provider!r} is not configured."
+        )
+    # Audit BEFORE the write (codebase convention): a failed audit must never leave an
+    # un-audited config change.
+    await audit.record(
+        actor=admin.username,
+        role=admin.role,
+        action="switch_model_provider",
+        target_type="app_setting",
+        target_id="model_provider",
+        reason=body.reason,
+    )
+    await settings_repo.set_active_provider(body.provider, updated_by=admin.username)
+    # Write-through: refresh the API-process resolver cache so the switch is instant here
+    # (the worker + any other process catch up within the resolver TTL).
+    if resolver is not None:
+        resolver.invalidate()
+    return ActionResponse(ok=True, detail=f"Active model provider set to {body.provider!r}.")
 
 
 @router.get("/dashboard", response_model=DashboardResponse)
@@ -392,6 +637,30 @@ async def dashboard(
         ),
         unresolved_questions=await repo.count_unsupported(),
     )
+
+
+@router.get("/dashboard/trends", response_model=TrendsResponse)
+async def dashboard_trends(
+    _admin: AdminDep,
+    aggregates: AggregatesRepoDep,
+    days: Annotated[int, Query(ge=1, le=90)] = 30,
+) -> TrendsResponse:
+    """Daily count snapshots powering the dashboard trend chart + KPI deltas.
+
+    Counts only, no PII (invariant #5). Empty until the ``daily_aggregates`` worker
+    job has recorded at least one day.
+    """
+    snapshots = await aggregates.series(limit=days)
+    points = [
+        TrendPoint(
+            date=str(snap.get("date") or snap.get("_id") or ""),
+            conversations=int((snap.get("conversations") or {}).get("total", 0)),
+            requests=int((snap.get("requests") or {}).get("total", 0)),
+            feedback=int((snap.get("feedback") or {}).get("total", 0)),
+        )
+        for snap in snapshots
+    ]
+    return TrendsResponse(points=points)
 
 
 _EMPTY_FUNNEL = {"visited": 0, "asked": 0, "engaged": 0, "requested": 0}
@@ -486,7 +755,7 @@ async def list_requests(
                 status=r.status,
                 reference=r.reference,
                 contact_email=mask_email(r.contact.email),
-                contact_company=r.contact.company,
+                contact_company=mask_company(r.contact.company),
                 conversation_id=r.conversation_id,
                 destination=r.destination,
                 delivery_channel=r.delivery_channel,
@@ -671,6 +940,15 @@ class KnowledgeListResponse(BaseModel):
     sources: list[KnowledgeSummary]
 
 
+class KnowledgeContentResponse(BaseModel):
+    """The stored text of one knowledge document, for the admin viewer."""
+
+    source_id: str
+    title: str
+    content: str | None  # decoded text; None ⇒ binary/non-text or a pre-feature record
+    available: bool
+
+
 def _knowledge_summary(s: KnowledgeSource) -> KnowledgeSummary:
     # NEVER expose openai_file_id / vector_store_id to the browser (invariant #6).
     return KnowledgeSummary(
@@ -685,6 +963,16 @@ def _knowledge_summary(s: KnowledgeSource) -> KnowledgeSummary:
         review_date=s.review_date,
         updated_at=s.updated_at,
     )
+
+
+def _extract_text(content: bytes) -> str | None:
+    """Decode a knowledge upload to text for the admin viewer, or None if it isn't
+    UTF-8 text (e.g. a binary/PDF upload) — the viewer then shows 'no preview'. Bounded
+    so a large doc can't bloat the record or the content payload."""
+    try:
+        return content.decode("utf-8")[:_MAX_CONTENT_CHARS]
+    except UnicodeDecodeError:
+        return None
 
 
 async def _read_upload(file: UploadFile) -> bytes:
@@ -729,6 +1017,7 @@ async def _record_upload(
         indexing_status="pending",  # awaiting approval → attach → index
         source_url=f"/knowledge/{source_id}",
         checksum=hashlib.sha256(content).hexdigest(),
+        content_text=_extract_text(content),
     )
 
 
@@ -738,6 +1027,24 @@ async def list_knowledge_sources(
 ) -> KnowledgeListResponse:
     return KnowledgeListResponse(
         sources=[_knowledge_summary(s) for s in await knowledge.list_sources()]
+    )
+
+
+@router.get("/knowledge-sources/{source_id}/content", response_model=KnowledgeContentResponse)
+async def get_knowledge_content(
+    source_id: str, _admin: AdminDep, knowledge: KnowledgeRepoDep
+) -> KnowledgeContentResponse:
+    """The stored text of a knowledge document, for the admin viewer. Cadre's own content
+    (not PII); provider ids are never exposed (invariant #6). ``available`` is False for a
+    binary upload or a record from before previews were stored. Viewers may read it too."""
+    source = await knowledge.get(source_id)
+    if source is None:
+        raise AppError(ErrorCode.INVALID_REQUEST, "No such knowledge document.")
+    return KnowledgeContentResponse(
+        source_id=source.id,
+        title=source.title,
+        content=source.content_text,
+        available=source.content_text is not None,
     )
 
 
@@ -970,7 +1277,13 @@ async def latest_insights(_admin: AdminDep, insights: InsightsRepoDep) -> Insigh
 
 @router.get("/insights/reports", response_model=InsightsListResponse)
 async def list_insights(_admin: AdminDep, insights: InsightsRepoDep) -> InsightsListResponse:
-    """Recent reports (newest first) so the UI can offer a day/week/month picker."""
+    """Recent reports so the UI can offer a day/week/month picker. Fetched PER horizon
+    and merged newest-first, so a high daily volume can't push weekly/monthly history
+    out of the list."""
+    reports: list[InsightsReport] = []
+    for period_type, limit in (("daily", 45), ("weekly", 26), ("monthly", 12)):
+        reports.extend(await insights.list_recent(limit=limit, period_type=period_type))
+    reports.sort(key=lambda r: r.generated_at, reverse=True)
     return InsightsListResponse(
         reports=[
             InsightsReportItem(
@@ -981,7 +1294,7 @@ async def list_insights(_admin: AdminDep, insights: InsightsRepoDep) -> Insights
                 conversations_analyzed=r.conversations_analyzed,
                 cluster_count=len(r.clusters),
             )
-            for r in await insights.list_recent()
+            for r in reports
         ]
     )
 

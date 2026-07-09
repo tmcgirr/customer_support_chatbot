@@ -8,7 +8,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.agent.adapter import OpenAIResponsesAdapter
+from app.agent.provider import ProviderResolver, build_adapters
 from app.api import dev, health
 from app.api.admin import router as admin_router
 from app.api.public import conversations as public_conversations
@@ -32,6 +32,10 @@ from app.domain.knowledge.store import build_knowledge_store
 from app.domain.privacy.repository import ensure_indexes as ensure_privacy_indexes
 from app.domain.ratelimit.repository import ensure_indexes as ensure_ratelimit_indexes
 from app.domain.requests.repository import ensure_indexes as ensure_request_indexes
+from app.domain.settings.repository import SettingsRepository
+from app.domain.settings.repository import ensure_indexes as ensure_settings_indexes
+from app.domain.usage.repository import LlmUsageRepository
+from app.domain.usage.repository import ensure_indexes as ensure_llm_usage_indexes
 
 logger = get_logger("app.request")
 
@@ -50,16 +54,28 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await ensure_audit_indexes(database["audit"])
     await ensure_privacy_indexes(database["privacy_requests"])
     await ensure_insights_indexes(database["insights_reports"])
+    await ensure_settings_indexes(database["app_settings"])
+    await ensure_llm_usage_indexes(database["llm_usage"])
     app.state.mongo_client = client
     app.state.db = database
-    app.state.adapter = OpenAIResponsesAdapter()
+    # Build every configured provider's adapter once; the resolver picks the runtime-active
+    # one per turn (admin toggle, persisted in app_settings). Provider isolation holds —
+    # provider-specific types live only in adapter.py (invariant #4). The llm_usage recorder
+    # is the classify/embed usage sink (dormant on the API process, which only streams chat).
+    settings = get_settings()
+    llm_usage = LlmUsageRepository(database["llm_usage"])
+    app.state.provider_resolver = ProviderResolver(
+        build_adapters(settings, on_usage=llm_usage.record),
+        SettingsRepository(database["app_settings"]),
+        default=settings.model_provider,
+    )
     app.state.knowledge_search = KnowledgeSearch()
     app.state.knowledge_store = build_knowledge_store(get_settings())
     logger.info("app.startup", extra={"context": {"db": database.name}})
     try:
         yield
     finally:
-        await app.state.adapter.aclose()
+        await app.state.provider_resolver.aclose()
         await app.state.knowledge_search.aclose()
         store_close = getattr(app.state.knowledge_store, "aclose", None)
         if store_close is not None:
@@ -72,7 +88,18 @@ def create_app() -> FastAPI:
     configure_logging()
     settings = get_settings()
 
-    app = FastAPI(title="Cadre AI Support Chatbot", version=__version__, lifespan=lifespan)
+    # Hide the interactive docs / OpenAPI schema outside dev — they enumerate the whole
+    # route surface incl. admin endpoints (routes still enforce auth, but don't hand
+    # attackers the map for free; SECURITY_REVIEW_V1 L3).
+    _expose_docs = settings.env == "dev"
+    app = FastAPI(
+        title="Cadre AI Support Chatbot",
+        version=__version__,
+        lifespan=lifespan,
+        docs_url="/docs" if _expose_docs else None,
+        redoc_url="/redoc" if _expose_docs else None,
+        openapi_url="/openapi.json" if _expose_docs else None,
+    )
 
     app.add_middleware(
         CORSMiddleware,

@@ -1,7 +1,8 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App";
+import { createConversation } from "./api/client";
 
 vi.mock("./api/client", () => ({
   createConversation: vi.fn().mockResolvedValue({
@@ -25,19 +26,34 @@ vi.mock("./api/client", () => ({
 afterEach(() => vi.clearAllMocks());
 
 describe("widget integration", () => {
-  it("opens the panel and shows the welcome + suggested chips", async () => {
+  it("shows the welcome + suggested chips (panel open by default)", async () => {
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "Chat with us" }));
 
     expect(await screen.findByText(/Cadre AI's virtual assistant/i)).toBeInTheDocument();
+    // The privacy disclosure is shown once in the opening message (not a footer).
+    expect(
+      screen.getByText(/This chat uses AI and may store your messages/i),
+    ).toBeInTheDocument();
     expect(
       await screen.findByRole("button", { name: "Book a strategy call" }),
     ).toBeInTheDocument();
   });
 
+  it("starts a fresh chat from the header New chat button", async () => {
+    render(<App />);
+    await screen.findByText(/Cadre AI's virtual assistant/i);
+    // One create on boot.
+    expect(createConversation).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+
+    // A second create for the fresh thread, and the welcome is shown again.
+    await waitFor(() => expect(createConversation).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText(/Cadre AI's virtual assistant/i)).toBeInTheDocument();
+  });
+
   it("opens the strategy-call form when its chip is selected (side effects via a form)", async () => {
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "Chat with us" }));
     fireEvent.click(await screen.findByRole("button", { name: "Book a strategy call" }));
 
     expect(

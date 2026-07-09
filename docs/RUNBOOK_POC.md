@@ -23,7 +23,7 @@ All config is read in **one place** — `backend/app/core/config.py` — from
 | `SESSION_KEY_ID` / `SESSION_SECRET` | `k1` / `dev-only-change-me` | HMAC session tokens. **Change in prod.** |
 | `SESSION_EXTRA_SECRETS` | — | Retired keys still trusted for verification: `kid:secret,...`. |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / `dev-only-change-me` | Admin Basic auth. **Change in prod.** |
-| `PORTAL_URL` | `https://portal.cadre.ai` | Placeholder for POC. |
+| `PORTAL_URL` | `https://portal.cadreai.com` | Placeholder — real portal URL owned by Client Success. |
 | `MESSAGE_CAP` | `40` | Max user turns per conversation. |
 | `MESSAGE_MAX_CHARS` | `2000` | Max chars per user message. |
 | `IP_CREATE_CAP` | `10` | Conversations per IP per window. |

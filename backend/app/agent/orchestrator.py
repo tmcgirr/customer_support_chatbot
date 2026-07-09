@@ -174,6 +174,7 @@ class ChatOrchestrator:
         seen_source_ids: set[str] = set()
         suggested_action_ids: list[str] = []
         finalized = False
+        recorded_unsupported = False  # push the verbatim question at most once per turn
 
         try:
             for _round in range(_MAX_TOOL_ROUNDS):
@@ -210,11 +211,15 @@ class ChatOrchestrator:
                     if (
                         call.name == "get_canonical_answer"
                         and call.arguments.get("intent") == "unsupported"
+                        and not recorded_unsupported
                     ):
-                        # Surface the verbatim question in the admin unresolved list (§7).
+                        # Surface the verbatim question in the admin unresolved list (§7),
+                        # but only once per turn even if the model calls the tool repeatedly
+                        # on the same content (SECURITY_REVIEW_V1 L7).
                         await self._repo.add_unsupported_question(
                             conversation.id, user_message.content
                         )
+                        recorded_unsupported = True
                     if result.canonical_answer_id is not None:
                         canonical_answer_id = result.canonical_answer_id
                     for source in result.sources:

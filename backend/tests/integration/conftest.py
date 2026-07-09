@@ -6,8 +6,10 @@ import pytest
 from httpx import ASGITransport
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection
 
+from app.agent.provider import ModelProviders
 from app.api.deps import (
     get_adapter,
+    get_aggregates_repository,
     get_audit_repository,
     get_canonical_repository,
     get_conversation_repository,
@@ -17,11 +19,15 @@ from app.api.deps import (
     get_knowledge_repository,
     get_knowledge_search,
     get_knowledge_store,
+    get_model_providers,
     get_privacy_repository,
     get_rate_limiter,
     get_request_repository,
+    get_settings_repository,
+    get_usage_repository,
 )
 from app.core.config import get_settings
+from app.domain.aggregates.repository import AggregatesRepository
 from app.domain.audit.repository import AuditRepository
 from app.domain.audit.repository import ensure_indexes as ensure_audit
 from app.domain.canonical.repository import CanonicalAnswerRepository
@@ -41,6 +47,8 @@ from app.domain.privacy.repository import ensure_indexes as ensure_privacy
 from app.domain.ratelimit.repository import RateLimitRepository
 from app.domain.requests.repository import RequestRepository
 from app.domain.requests.repository import ensure_indexes as ensure_requests
+from app.domain.settings.repository import SettingsRepository
+from app.domain.usage.repository import LlmUsageRepository
 from app.main import app
 from tests.fakes import FakeAdapter, FakeKnowledgeSearch
 
@@ -134,6 +142,24 @@ async def insights_collection() -> AsyncIterator[Collection]:
 
 
 @pytest.fixture
+async def aggregates_collection() -> AsyncIterator[Collection]:
+    async for coll in _fresh_collection("aggregates"):
+        yield coll
+
+
+@pytest.fixture
+async def app_settings_collection() -> AsyncIterator[Collection]:
+    async for coll in _fresh_collection("app_settings"):
+        yield coll
+
+
+@pytest.fixture
+async def llm_usage_collection() -> AsyncIterator[Collection]:
+    async for coll in _fresh_collection("llm_usage"):
+        yield coll
+
+
+@pytest.fixture
 def fake_adapter() -> FakeAdapter:
     return FakeAdapter.replying(DEFAULT_REPLY)
 
@@ -155,6 +181,9 @@ async def client(
     privacy_collection: Collection,
     knowledge_collection: Collection,
     insights_collection: Collection,
+    aggregates_collection: Collection,
+    app_settings_collection: Collection,
+    llm_usage_collection: Collection,
     fake_adapter: FakeAdapter,
     fake_knowledge: FakeKnowledgeSearch,
 ) -> AsyncIterator[httpx.AsyncClient]:
@@ -168,8 +197,10 @@ async def client(
     privacy_repo = PrivacyRequestRepository(privacy_collection)
     knowledge_repo = KnowledgeSourceRepository(knowledge_collection)
     insights_repo = InsightsReportRepository(insights_collection)
+    aggregates_repo = AggregatesRepository(aggregates_collection)
     app.dependency_overrides[get_knowledge_repository] = lambda: knowledge_repo
     app.dependency_overrides[get_insights_repository] = lambda: insights_repo
+    app.dependency_overrides[get_aggregates_repository] = lambda: aggregates_repo
     # A simulated store so knowledge upload/approve/remove never calls a real OpenAI store.
     app.dependency_overrides[get_knowledge_store] = lambda: SimulatedKnowledgeStore()
     app.dependency_overrides[get_conversation_repository] = lambda: conversation_repo
@@ -182,6 +213,17 @@ async def client(
     app.dependency_overrides[get_privacy_repository] = lambda: privacy_repo
     app.dependency_overrides[get_adapter] = lambda: fake_adapter
     app.dependency_overrides[get_knowledge_search] = lambda: fake_knowledge
+    # Model-provider toggle: a repo over a test collection (lifespan doesn't run under
+    # ASGITransport, so app.state.db is unset), and both providers presented as available.
+    app.dependency_overrides[get_settings_repository] = lambda: SettingsRepository(
+        app_settings_collection
+    )
+    app.dependency_overrides[get_model_providers] = lambda: ModelProviders(
+        default="openai", available=["openai", "anthropic"]
+    )
+    app.dependency_overrides[get_usage_repository] = lambda: LlmUsageRepository(
+        llm_usage_collection
+    )
     transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test", timeout=30.0) as ac:
         yield ac

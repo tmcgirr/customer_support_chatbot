@@ -95,13 +95,13 @@ class FakeAdapter:
         if self.raises is not None:
             raise self.raises
 
-    async def classify(self, *, instructions: str, text: str) -> str:
+    async def classify(self, *, instructions: str, text: str, category: str = "classify") -> str:
         self.classify_calls.append(text)
         if self._classify_raises is not None:
             raise self._classify_raises
         return self._classify_result or '{"topic": "other", "intent": "learn"}'
 
-    async def embed(self, texts: list[str]) -> list[list[float]]:
+    async def embed(self, texts: list[str], *, category: str = "embeddings") -> list[list[float]]:
         # Deterministic: a scripted vector per text, else a distinct near-orthogonal
         # default so unmapped texts don't accidentally cluster together.
         self.embed_calls.append(list(texts))

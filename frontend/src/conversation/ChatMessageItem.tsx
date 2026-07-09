@@ -5,6 +5,7 @@
 
 import type { ChatMessage, FeedbackRating, FeedbackReason, SuggestedAction } from "../types";
 import { FeedbackControl } from "./FeedbackControl";
+import { Markdown } from "./markdown";
 import { SuggestedActions } from "./SuggestedActions";
 
 interface ChatMessageItemProps {
@@ -29,8 +30,16 @@ export function ChatMessageItem({ message, onSelectAction, onRate }: ChatMessage
             generic <div> would be ignored by the log announcement and is prohibited
             on a role-less element, so a sr-only span is used instead. */}
         <span className="cadre-sr-only">{isAssistant ? "Assistant said: " : "You said: "}</span>
-        <span className="cadre-message-text">{message.content}</span>
-        {isStreaming && (
+        {isAssistant ? (
+          // Assistant output is Markdown — render it to safe formatted elements.
+          <div className="cadre-message-md">
+            <Markdown text={message.content} />
+          </div>
+        ) : (
+          // User text is shown verbatim (never parsed as Markdown).
+          <span className="cadre-message-text">{message.content}</span>
+        )}
+        {isStreaming && message.content.length === 0 && (
           <span className="cadre-typing" aria-hidden="true">
             &#8226;&#8226;&#8226;
           </span>

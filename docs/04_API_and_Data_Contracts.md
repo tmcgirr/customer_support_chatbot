@@ -258,6 +258,46 @@ free text is PII-masked in the admin API). The code and the
 - **Roles/audit (V1):** admin uses `admin`/`viewer` roles; every reveal/export and content/deletion
   action writes an append-only `audit` record (see [admin roles & audit](capabilities/admin-roles-and-audit.md)).
 
+## Multi-provider model selection (OpenAI ↔ Anthropic)
+
+The chat model provider is switchable at runtime from the admin portal. Provider isolation is
+unchanged (invariant #4): a second adapter (`AnthropicMessagesAdapter`) lives behind the same
+`ModelAdapter` protocol in `app/agent/adapter.py`; nothing provider-typed escapes it.
+
+- **`app_settings`** (new collection) — a single document `_id: "model_provider"`:
+  `{ active_provider: "openai" | "anthropic", updated_by, updated_at }`. Read by BOTH the API and
+  the worker (short TTL cache) so a switch takes effect in every process without a restart. When
+  the document is absent, the `MODEL_PROVIDER` env value is the default. No secrets are stored.
+- **Endpoints:** `GET /api/v1/admin/model-provider` (admin or viewer) → `{ active, default, available }`
+  (`available` = providers whose key is configured). `POST /api/v1/admin/model-provider`
+  (**admin role only**, `{ provider, reason }`, reason required, audited) — rejects a provider that
+  isn't in `available` with `INVALID_REQUEST`. `GET /api/v1/admin/system` also surfaces
+  `active_model_provider`.
+- **Audit action** `switch_model_provider` (target `app_setting` / `model_provider`).
+- **Embeddings:** Anthropic has no embeddings API, so the Claude adapter reuses OpenAI embeddings
+  for insights clustering — `OPENAI_API_KEY` remains required regardless of the active chat provider.
+- **Promotion (invariant #15):** the golden set (`eval.run --provider anthropic`) gates the Claude
+  config; switching in prod should follow a passing gate on the target provider.
+
+## LLM usage & cost visibility
+
+An admin Governance panel shows token usage + $ spend per provider / model / category, the
+active model + a masked API key per provider, and a month-to-date budget with an alert.
+
+- **`llm_usage`** (new collection) — a count-only daily rollup, `_id: "{date}:{provider}:{model}:{category}"`,
+  `{date, provider, model, category, input_tokens, output_tokens, requests}`, written via `$inc`
+  upserts by the worker's classify/embed calls (categories `summary`/`insights`/`labeling`/`embeddings`)
+  through the adapter's `on_usage` hook. No PII → outside the retention sweep (like `aggregates`).
+  **Chat + testing** usage is NOT recorded here — it's derived from conversation message `usage`
+  (testing = `entry_page="eval"`), so it's never duplicated.
+- **Endpoint:** `GET /api/v1/admin/usage?window=30` (admin or viewer) → totals + `by_provider`/
+  `by_model`/`by_category` (tokens + $), `unpriced_models`, per-provider `{active, configured, model,
+  key_last4}`, and `budget`. **`key_last4` is admins-only** (viewers get `null`; the full key is never
+  sent/logged — invariant #5). Cost uses `app/domain/usage/pricing.py` + the `LLM_PRICING` env override;
+  OpenAI/OpenRouter rates ship as PLACEHOLDERS and are flagged unpriced until set.
+- **Budget alert** `llm_budget_exceeded` (warning) fires in `evaluate_alerts` when month-to-date spend
+  ≥ `LLM_MONTHLY_BUDGET_USD` (0 = disabled); surfaced on `/monitoring` + the worker's alert log.
+
 ---
 
 # 8. Indexes

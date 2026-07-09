@@ -27,6 +27,8 @@ def evaluate_alerts(
     request_counts: dict[str, int],
     privacy_counts: dict[str, int],
     queue_depth_threshold: int,
+    llm_spend_usd: float = 0.0,
+    llm_budget_usd: float = 0.0,
 ) -> list[Alert]:
     """Return the currently-firing alerts. `critical` conditions each mean a resource is
     stuck and needs a human (fire when > 0); `warning` conditions are degradations."""
@@ -77,6 +79,20 @@ def evaluate_alerts(
                 queue_depth,
                 queue_depth_threshold,
                 "Worker queue is backing up — the worker may be down or overloaded.",
+            )
+        )
+
+    # LLM budget: month-to-date spend has reached the configured monthly allotment
+    # (0 = disabled). A public chatbot overrunning its budget is a denial-of-wallet signal.
+    if llm_budget_usd > 0 and llm_spend_usd >= llm_budget_usd:
+        alerts.append(
+            Alert(
+                "llm_budget_exceeded",
+                "warning",
+                int(round(llm_spend_usd)),
+                int(round(llm_budget_usd)),
+                "Month-to-date LLM spend reached the budget — review usage / switch to a "
+                "cheaper model.",
             )
         )
 

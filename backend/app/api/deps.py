@@ -6,10 +6,12 @@ from fastapi import Depends, Header, Request
 
 from app.agent.adapter import ModelAdapter
 from app.agent.orchestrator import ChatOrchestrator
+from app.agent.provider import ModelProviders, ProviderResolver, model_providers
 from app.agent.tools import ToolRegistry
 from app.core.config import get_settings
 from app.core.errors import AppError, ErrorCode
 from app.core.security import SessionClaims, verify_session_token
+from app.domain.aggregates.repository import AggregatesRepository
 from app.domain.audit.repository import AuditRepository
 from app.domain.canonical.repository import CanonicalAnswerRepository
 from app.domain.conversations.repository import ConversationRepository
@@ -23,6 +25,8 @@ from app.domain.privacy.repository import PrivacyRequestRepository
 from app.domain.ratelimit.repository import RateLimitRepository
 from app.domain.requests.repository import RequestRepository
 from app.domain.requests.service import RequestService
+from app.domain.settings.repository import SettingsRepository
+from app.domain.usage.repository import LlmUsageRepository
 
 
 def get_conversation_repository(request: Request) -> ConversationRepository:
@@ -72,8 +76,36 @@ def get_insights_repository(request: Request) -> InsightsReportRepository:
     return InsightsReportRepository(request.app.state.db["insights_reports"])
 
 
-def get_adapter(request: Request) -> ModelAdapter:
-    return cast(ModelAdapter, request.app.state.adapter)
+def get_aggregates_repository(request: Request) -> AggregatesRepository:
+    return AggregatesRepository(request.app.state.db["aggregates"])
+
+
+async def get_adapter(request: Request) -> ModelAdapter:
+    # Resolve the runtime-active provider (admin toggle) per request; the resolver
+    # TTL-caches so this is not a Mongo read on every turn. Downstream sees only the
+    # normalized ModelAdapter — it never knows which provider answered.
+    resolver = cast(ProviderResolver, request.app.state.provider_resolver)
+    return await resolver.resolve()
+
+
+def get_settings_repository(request: Request) -> SettingsRepository:
+    return SettingsRepository(request.app.state.db["app_settings"])
+
+
+def get_usage_repository(request: Request) -> LlmUsageRepository:
+    return LlmUsageRepository(request.app.state.db["llm_usage"])
+
+
+def get_model_providers() -> ModelProviders:
+    """The startup default + the key-configured providers the admin toggle may select.
+    Overridable in tests to exercise the admin panel without real provider keys."""
+    return model_providers(get_settings())
+
+
+def get_provider_resolver(request: Request) -> ProviderResolver | None:
+    """The live resolver, so the admin write path can invalidate its cache (write-through).
+    None outside a running app (e.g. tests that don't start the lifespan) — a no-op there."""
+    return getattr(request.app.state, "provider_resolver", None)
 
 
 def get_knowledge_search(request: Request) -> KnowledgeSearch:
@@ -91,7 +123,12 @@ CanonicalRepoDep = Annotated[CanonicalAnswerRepository, Depends(get_canonical_re
 RequestRepoDep = Annotated[RequestRepository, Depends(get_request_repository)]
 FeedbackRepoDep = Annotated[FeedbackRepository, Depends(get_feedback_repository)]
 InsightsRepoDep = Annotated[InsightsReportRepository, Depends(get_insights_repository)]
+AggregatesRepoDep = Annotated[AggregatesRepository, Depends(get_aggregates_repository)]
 AdapterDep = Annotated[ModelAdapter, Depends(get_adapter)]
+SettingsRepoDep = Annotated[SettingsRepository, Depends(get_settings_repository)]
+UsageRepoDep = Annotated[LlmUsageRepository, Depends(get_usage_repository)]
+ModelProvidersDep = Annotated[ModelProviders, Depends(get_model_providers)]
+ProviderResolverDep = Annotated[ProviderResolver | None, Depends(get_provider_resolver)]
 KnowledgeSearchDep = Annotated[KnowledgeSearch, Depends(get_knowledge_search)]
 
 

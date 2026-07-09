@@ -67,6 +67,44 @@ async def _upload(client: httpx.AsyncClient, title: str = "Doc") -> str:
     return resp.json()["source_id"]
 
 
+async def test_content_endpoint_returns_stored_text(client: httpx.AsyncClient) -> None:
+    sid = await _upload(client, title="Portal Guide")
+    resp = await client.get(f"/api/v1/admin/knowledge-sources/{sid}/content", auth=ADMIN_AUTH)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["available"] is True
+    assert body["title"] == "Portal Guide"
+    assert body["content"] == "# Guide\nHelpful content."
+    # The list must NOT leak the (potentially large) content text.
+    listing = await client.get("/api/v1/admin/knowledge-sources", auth=ADMIN_AUTH)
+    assert all("content" not in s and "content_text" not in s for s in listing.json()["sources"])
+
+
+async def test_content_endpoint_viewer_can_read(client: httpx.AsyncClient) -> None:
+    sid = await _upload(client)
+    resp = await client.get(f"/api/v1/admin/knowledge-sources/{sid}/content", auth=VIEWER_AUTH)
+    assert resp.status_code == 200 and resp.json()["available"] is True
+
+
+async def test_content_endpoint_binary_upload_has_no_preview(client: httpx.AsyncClient) -> None:
+    resp = await client.post(
+        "/api/v1/admin/knowledge-sources",
+        files={"file": ("logo.bin", b"\xff\xfe\x00\x01binary", "application/octet-stream")},
+        data={"title": "Binary", "reason": "r"},
+        auth=ADMIN_AUTH,
+    )
+    sid = resp.json()["source_id"]
+    body = (
+        await client.get(f"/api/v1/admin/knowledge-sources/{sid}/content", auth=ADMIN_AUTH)
+    ).json()
+    assert body["available"] is False and body["content"] is None
+
+
+async def test_content_endpoint_unknown_id_rejected(client: httpx.AsyncClient) -> None:
+    resp = await client.get("/api/v1/admin/knowledge-sources/kbs_missing/content", auth=ADMIN_AUTH)
+    assert resp.status_code == 400
+
+
 async def test_approve_attaches_and_marks_indexed(
     client: httpx.AsyncClient, audit_collection: Collection
 ) -> None:

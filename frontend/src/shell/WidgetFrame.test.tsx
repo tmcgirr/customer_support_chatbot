@@ -82,14 +82,40 @@ describe("WidgetFrame", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("renders the header, children and the persistent privacy disclosure when open", () => {
+  it("renders the header and children when open", () => {
     render(<Harness />);
     fireEvent.click(screen.getByRole("button", { name: "Chat with us" }));
 
     expect(screen.getByText("Cadre AI Assistant")).toBeInTheDocument();
     expect(screen.getByText("conversation goes here")).toBeInTheDocument();
-    expect(
-      screen.getByText(/This chat uses AI and may store your messages/i),
-    ).toBeInTheDocument();
+    // The privacy disclosure is no longer a persistent footer here; it now lives in
+    // the opening/welcome message (see App.test / WelcomeChips).
+  });
+
+  it("fires onNewChat from the header New chat button and disables it when not allowed", () => {
+    const onNewChat = vi.fn();
+    const { rerender } = render(
+      <WidgetFrame open onToggle={vi.fn()} onClose={vi.fn()} onNewChat={onNewChat} canStartNew>
+        <p>body</p>
+      </WidgetFrame>,
+    );
+
+    const newChat = screen.getByRole("button", { name: "New chat" });
+    expect(newChat).toBeEnabled();
+    fireEvent.click(newChat);
+    expect(onNewChat).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <WidgetFrame
+        open
+        onToggle={vi.fn()}
+        onClose={vi.fn()}
+        onNewChat={onNewChat}
+        canStartNew={false}
+      >
+        <p>body</p>
+      </WidgetFrame>,
+    );
+    expect(screen.getByRole("button", { name: "New chat" })).toBeDisabled();
   });
 });

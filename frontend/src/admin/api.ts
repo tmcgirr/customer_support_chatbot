@@ -56,6 +56,18 @@ export interface DashboardResponse {
   unresolved_questions: number;
 }
 
+/** One UTC-day snapshot of running totals (counts only) for the trend chart + deltas. */
+export interface TrendPoint {
+  date: string;
+  conversations: number;
+  requests: number;
+  feedback: number;
+}
+
+export interface TrendsResponse {
+  points: TrendPoint[];
+}
+
 export interface ConversationSummary {
   conversation_id: string;
   status: string;
@@ -139,6 +151,53 @@ export interface ActionResult {
   detail: string;
 }
 
+/** The active chat model provider and the set an admin may switch between. */
+export interface ModelProviderInfo {
+  active: string; // currently-serving provider (persisted runtime setting or the default)
+  default: string; // the startup/env default
+  available: string[]; // providers with a key configured — the selectable set
+}
+
+/** One rolled-up usage line (per provider / model / category). */
+export interface UsageLine {
+  label: string;
+  provider: string;
+  input_tokens: number;
+  output_tokens: number;
+  requests: number;
+  cost_usd: number;
+  priced: boolean; // false → an unpriced model is in this line (cost incomplete)
+}
+
+export interface UsageProviderInfo {
+  provider: string;
+  active: boolean;
+  configured: boolean;
+  model: string;
+  key_last4: string | null; // last 4 chars — admins only; null for viewers / unconfigured
+}
+
+export interface UsageBudget {
+  monthly_usd: number;
+  month_to_date_usd: number;
+  pct: number;
+  over: boolean;
+}
+
+/** LLM token usage + $ cost breakdown for the Governance usage panel. */
+export interface UsageResponse {
+  window_days: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cost_usd: number;
+  by_provider: UsageLine[];
+  by_model: UsageLine[];
+  by_category: UsageLine[];
+  unpriced_models: string[];
+  providers: UsageProviderInfo[];
+  budget: UsageBudget | null;
+}
+
 export interface CanonicalAnswer {
   intent: string;
   name: string;
@@ -174,6 +233,14 @@ export interface KnowledgeSource {
 
 export interface KnowledgeSourcesResponse {
   sources: KnowledgeSource[];
+}
+
+/** The stored text of one knowledge document, for the admin viewer. */
+export interface KnowledgeContent {
+  source_id: string;
+  title: string;
+  content: string | null; // null ⇒ binary/non-text or a pre-feature record
+  available: boolean;
 }
 
 /** A cluster of near-identical visitor questions within an insights report. */
@@ -298,6 +365,7 @@ export interface RequestFilters {
 export interface AdminClient {
   getMe(): Promise<MeResponse>;
   getDashboard(): Promise<DashboardResponse>;
+  getTrends(days?: number): Promise<TrendsResponse>;
   listConversations(): Promise<ConversationsResponse>;
   getConversation(id: string): Promise<ConversationDetailResponse>;
   listRequests(filters?: RequestFilters): Promise<RequestsResponse>;
@@ -307,6 +375,7 @@ export interface AdminClient {
   listAudit(): Promise<AuditResponse>;
   listPrivacyRequests(): Promise<PrivacyRequestsResponse>;
   listKnowledgeSources(): Promise<KnowledgeSourcesResponse>;
+  getKnowledgeContent(sourceId: string): Promise<KnowledgeContent>;
   // Privileged actions (admin role; 403 → AdminForbiddenError for a viewer).
   revealRequest(id: string, reason: string): Promise<RevealedRequest>;
   revealConversation(id: string, reason: string): Promise<RevealedConversation>;
@@ -329,6 +398,11 @@ export interface AdminClient {
   getInsightsReport(reportId: string): Promise<InsightsReport>;
   runInsights(): Promise<ActionResult>; // admin-only; enqueues a background run
   getKnowledgeGaps(windowDays?: number): Promise<KnowledgeGapsResult>;
+  // Model provider (read: admin or viewer; switch: admin-only, reason required, audited).
+  getModelProvider(): Promise<ModelProviderInfo>;
+  setModelProvider(provider: string, reason: string): Promise<ActionResult>;
+  // LLM usage + cost (admin or viewer; masked API key shown to admins only).
+  getUsage(windowDays?: number): Promise<UsageResponse>;
 }
 
 function basicHeader(creds: AdminCreds): string {
@@ -393,6 +467,7 @@ export function createAdminClient(creds: AdminCreds): AdminClient {
   return {
     getMe: () => request<MeResponse>("/me"),
     getDashboard: () => request<DashboardResponse>("/dashboard"),
+    getTrends: (days = 30) => request<TrendsResponse>(`/dashboard/trends?days=${days}`),
     listConversations: () => request<ConversationsResponse>("/conversations"),
     getConversation: (id: string) =>
       request<ConversationDetailResponse>(`/conversations/${encodeURIComponent(id)}`),
@@ -409,6 +484,8 @@ export function createAdminClient(creds: AdminCreds): AdminClient {
     listAudit: () => request<AuditResponse>("/audit"),
     listPrivacyRequests: () => request<PrivacyRequestsResponse>("/privacy-requests"),
     listKnowledgeSources: () => request<KnowledgeSourcesResponse>("/knowledge-sources"),
+    getKnowledgeContent: (sourceId: string) =>
+      request<KnowledgeContent>(`/knowledge-sources/${encodeURIComponent(sourceId)}/content`),
     revealRequest: (id: string, reason: string) =>
       request<RevealedRequest>(`/requests/${encodeURIComponent(id)}/reveal`, {
         method: "POST",
@@ -468,5 +545,9 @@ export function createAdminClient(creds: AdminCreds): AdminClient {
     runInsights: () => request<ActionResult>("/insights/run", { method: "POST" }),
     getKnowledgeGaps: (windowDays = 14) =>
       request<KnowledgeGapsResult>(`/insights/gaps?window=${windowDays}`),
+    getModelProvider: () => request<ModelProviderInfo>("/model-provider"),
+    setModelProvider: (provider: string, reason: string) =>
+      request<ActionResult>("/model-provider", { method: "POST", body: { provider, reason } }),
+    getUsage: (windowDays = 30) => request<UsageResponse>(`/usage?window=${windowDays}`),
   };
 }

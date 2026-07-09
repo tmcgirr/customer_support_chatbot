@@ -16,9 +16,11 @@ Destination = Literal["hubspot", "zendesk", "email", "none"]
 
 
 class Contact(BaseModel):
-    name: str | None = None
-    email: str | None = None
-    company: str | None = None
+    # Bounded so an attacker can't persist multi-MB values (SECURITY_REVIEW_V1 L2);
+    # comfortably above any real name/email/company.
+    name: str | None = Field(default=None, max_length=200)
+    email: str | None = Field(default=None, max_length=320)
+    company: str | None = Field(default=None, max_length=200)
 
 
 class RequestRecord(BaseModel):

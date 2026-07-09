@@ -1,9 +1,9 @@
 import { PRIVACY_URL, PRIVACY_VERSION } from "../config";
 
 /**
- * Persistent privacy / AI-use disclosure shown near the bottom of the panel.
- * The copy is fixed and must render verbatim. "Privacy Notice" links to the
- * production privacy URL (configurable per environment via VITE_PRIVACY_URL).
+ * Privacy / AI-use disclosure shown once inside the opening (welcome) message —
+ * see WelcomeChips. The copy is fixed and must render verbatim. "Privacy Notice"
+ * links to the production privacy URL (configurable per environment via VITE_PRIVACY_URL).
  */
 export function PrivacyDisclosure() {
   return (

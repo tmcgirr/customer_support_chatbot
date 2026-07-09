@@ -18,6 +18,7 @@ an admin to resolve, never blind-retried.
 import asyncio
 import contextlib
 import smtplib
+import ssl
 from email.message import EmailMessage
 
 import httpx
@@ -136,7 +137,10 @@ class EmailDeliveryClient:
         try:
             try:
                 if self._use_tls:
-                    server.starttls()
+                    # Verify the relay's cert + hostname (default context = CERT_REQUIRED +
+                    # check_hostname), so an on-path attacker can't MITM the STARTTLS
+                    # session and capture the SMTP creds + PII body (SECURITY_REVIEW_V1 M5).
+                    server.starttls(context=ssl.create_default_context())
                 if self._user:
                     server.login(self._user, self._password)
             except smtplib.SMTPAuthenticationError:

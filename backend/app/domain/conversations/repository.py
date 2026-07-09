@@ -341,10 +341,22 @@ class ConversationRepository:
         )
 
     async def add_unsupported_question(self, conversation_id: str, question: str) -> None:
-        """Record a verbatim unsupported question for the admin unresolved list (§7)."""
+        """Record a verbatim unsupported question for the admin unresolved list (§7).
+
+        Capped with ``$slice`` to the most recent N so a visitor repeatedly asking
+        unanswerable questions can't grow the document unboundedly (SECURITY_REVIEW_V1 L7).
+        """
+        cap = get_settings().unsupported_questions_cap
         await self._collection.update_one(
             {"_id": conversation_id},
-            {"$push": {"unsupported_questions": {"question": question, "at": _now()}}},
+            {
+                "$push": {
+                    "unsupported_questions": {
+                        "$each": [{"question": question, "at": _now()}],
+                        "$slice": -cap,
+                    }
+                }
+            },
         )
 
     # --- Analytics labeling (V1.5, worker-owned) ---
@@ -480,6 +492,46 @@ class ConversationRepository:
             (str(doc["_id"]) if doc["_id"] is not None else "unset"): int(doc["count"])
             for doc in await cursor.to_list(length=None)
         }
+
+    async def usage_by_model(self, since: datetime) -> list[dict[str, Any]]:
+        """Sum assistant-message token usage per (model, is_eval) for messages created on/after
+        ``since``. This is the source for the chat + testing categories in the LLM cost panel
+        (eval conversations carry entry_page="eval"); no chat-path code change needed."""
+        pipeline: list[dict[str, Any]] = [
+            {"$match": {"last_activity_at": {"$gte": since}}},
+            {"$project": {"entry_page": 1, "messages": 1}},
+            {"$unwind": "$messages"},
+            {
+                "$match": {
+                    "messages.role": "assistant",
+                    "messages.usage": {"$ne": None},
+                    "messages.created_at": {"$gte": since},
+                }
+            },
+            {
+                "$group": {
+                    "_id": {
+                        "model": "$messages.model",
+                        "eval": {"$eq": ["$entry_page", "eval"]},
+                    },
+                    "input_tokens": {"$sum": "$messages.usage.input_tokens"},
+                    "output_tokens": {"$sum": "$messages.usage.output_tokens"},
+                    "requests": {"$sum": 1},
+                }
+            },
+        ]
+        rows: list[dict[str, Any]] = []
+        for doc in await self._collection.aggregate(pipeline).to_list(length=None):
+            rows.append(
+                {
+                    "model": doc["_id"].get("model") or "unknown",
+                    "eval": bool(doc["_id"].get("eval")),
+                    "input_tokens": int(doc["input_tokens"]),
+                    "output_tokens": int(doc["output_tokens"]),
+                    "requests": int(doc["requests"]),
+                }
+            )
+        return rows
 
     async def list_recent(self, limit: int = 100) -> list[Conversation]:
         docs = (

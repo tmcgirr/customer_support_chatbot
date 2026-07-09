@@ -158,8 +158,10 @@ class _FakeSMTP:
     def __exit__(self, *a: object) -> bool:
         return False
 
-    def starttls(self) -> None:
-        pass
+    def starttls(self, *, context: object | None = None) -> None:
+        # Mirror smtplib.SMTP.starttls, which accepts a verifying ssl context (the
+        # adapter now passes ssl.create_default_context() — SECURITY_REVIEW_V1 M5).
+        self.tls_context = context
 
     def login(self, user: str, password: str) -> None:
         if self.login_exc:

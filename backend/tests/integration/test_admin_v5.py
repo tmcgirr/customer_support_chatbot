@@ -9,6 +9,7 @@ from app.core import ids
 from app.core.config import get_settings
 from app.domain.canonical.models import CanonicalAnswer
 from app.domain.requests.models import Contact, RequestRecord
+from app.domain.usage.repository import LlmUsageRepository
 from tests.integration.conftest import Collection
 
 _settings = get_settings()
@@ -207,6 +208,75 @@ async def test_approve_missing_draft_rejected(
     assert await audit_collection.count_documents({"action": "approve_canonical"}) == 0
 
 
+# --- Model provider (runtime toggle; admin-only, reason, audited) ---
+
+
+async def test_get_model_provider_reads_active(client: httpx.AsyncClient) -> None:
+    resp = await client.get("/api/v1/admin/model-provider", auth=ADMIN_AUTH)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["active"] == "openai"  # default, no doc yet
+    assert body["default"] == "openai"
+    assert set(body["available"]) == {"openai", "anthropic"}
+
+
+async def test_viewer_can_read_but_not_switch_model_provider(client: httpx.AsyncClient) -> None:
+    read = await client.get("/api/v1/admin/model-provider", auth=VIEWER_AUTH)
+    assert read.status_code == 200
+    write = await client.post(
+        "/api/v1/admin/model-provider",
+        json={"provider": "anthropic", "reason": "x"},
+        auth=VIEWER_AUTH,
+    )
+    assert write.status_code == 403  # authenticated but insufficient role
+
+
+async def test_admin_switch_model_provider_audits_and_takes_effect(
+    client: httpx.AsyncClient,
+    audit_collection: Collection,
+    app_settings_collection: Collection,
+) -> None:
+    resp = await client.post(
+        "/api/v1/admin/model-provider",
+        json={"provider": "anthropic", "reason": "eval passed; A/B win"},
+        auth=ADMIN_AUTH,
+    )
+    assert resp.status_code == 200 and resp.json()["ok"] is True
+
+    # The switch is persisted and reflected by the read endpoint + /system.
+    read = await client.get("/api/v1/admin/model-provider", auth=ADMIN_AUTH)
+    assert read.json()["active"] == "anthropic"
+    system = await client.get("/api/v1/admin/system", auth=ADMIN_AUTH)
+    assert system.json()["active_model_provider"] == "anthropic"
+
+    # A single audited record with the right action/target.
+    doc = await audit_collection.find_one({"action": "switch_model_provider"})
+    assert doc is not None
+    assert doc["target_type"] == "app_setting" and doc["target_id"] == "model_provider"
+    assert await app_settings_collection.count_documents({}) == 1
+
+
+async def test_switch_to_unavailable_provider_is_400_and_not_audited(
+    client: httpx.AsyncClient, audit_collection: Collection
+) -> None:
+    # Present only OpenAI as configured, then try to switch to Anthropic.
+    from app.agent.provider import ModelProviders
+    from app.api.deps import get_model_providers
+    from app.main import app
+
+    app.dependency_overrides[get_model_providers] = lambda: ModelProviders(
+        default="openai", available=["openai"]
+    )
+    resp = await client.post(
+        "/api/v1/admin/model-provider",
+        json={"provider": "anthropic", "reason": "x"},
+        auth=ADMIN_AUTH,
+    )
+    assert resp.status_code == 400
+    # Validate-before-audit: an unavailable provider must NOT write an audit record.
+    assert await audit_collection.count_documents({"action": "switch_model_provider"}) == 0
+
+
 async def test_monitoring_reports_operational_counts(
     client: httpx.AsyncClient, requests_collection: Collection, jobs_collection: Collection
 ) -> None:
@@ -258,3 +328,28 @@ async def test_audit_list_shows_actions(
     assert resp.status_code == 200
     entries = resp.json()["entries"]
     assert any(e["action"] == "reveal_request" and e["reason"] == "check" for e in entries)
+
+
+# --- LLM usage & cost (admin or viewer; API key tail admins-only) ---
+
+
+async def test_usage_reports_breakdowns_and_masks_key_for_viewer(
+    client: httpx.AsyncClient, llm_usage_collection: Collection
+) -> None:
+    # Seed a worker rollup row (same collection the endpoint reads through the override).
+    await LlmUsageRepository(llm_usage_collection).record("claude-haiku-4-5", "summary", 1000, 500)
+
+    admin = await client.get("/api/v1/admin/usage", auth=ADMIN_AUTH)
+    assert admin.status_code == 200
+    body = admin.json()
+    assert "summary" in {c["label"] for c in body["by_category"]}
+    assert "claude-haiku-4-5" in {m["label"] for m in body["by_model"]}
+    assert {"openai", "anthropic", "openrouter"} <= {p["provider"] for p in body["providers"]}
+    # An admin may see a masked tail, but never more than the last 4 chars.
+    for provider in body["providers"]:
+        assert provider["key_last4"] is None or len(provider["key_last4"]) == 4
+
+    viewer = await client.get("/api/v1/admin/usage", auth=VIEWER_AUTH)
+    assert viewer.status_code == 200
+    # Masking invariant: a viewer NEVER receives an API key tail (invariant #5/#12).
+    assert all(p["key_last4"] is None for p in viewer.json()["providers"])

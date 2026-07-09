@@ -90,6 +90,26 @@ def _dominant_topic(conversations: list[Conversation]) -> str | None:
     return Counter(topics).most_common(1)[0][0]
 
 
+def _fallback_summary(clusters: list[QuestionCluster]) -> str:
+    """A deterministic one-line summary built straight from the (complete) clusters —
+    no model call. Used when the LLM summary is skipped (shared time budget exhausted)
+    or fails, so the report still leads with something useful instead of an apology."""
+    total = len(clusters)
+    counts = Counter(c.coverage for c in clusters)
+    by_size = sorted(clusters, key=lambda c: c.size, reverse=True)
+    top = ", ".join(f"{c.label} ({c.size}×)" for c in by_size[:3])
+    gaps = [c.label for c in by_size if c.coverage in ("missing", "unclear")][:3]
+    parts = [
+        f"{total} question theme{'' if total == 1 else 's'} this period "
+        f"({counts.get('covered', 0)} covered, {counts.get('unclear', 0)} unclear, "
+        f"{counts.get('missing', 0)} missing).",
+        f"Top themes: {top}.",
+    ]
+    if gaps:
+        parts.append(f"Uncovered themes to address: {', '.join(gaps)}.")
+    return " ".join(parts)
+
+
 def _parse_analysis(raw: str, *, fallback_label: str) -> _Analysis:
     label, coverage, pq, pa = fallback_label, "unclear", "", ""
     try:
@@ -214,7 +234,7 @@ class InsightsService:
         questions = [q for _, q in pairs]
         try:
             embeddings = await asyncio.wait_for(
-                self._adapter.embed(questions),
+                self._adapter.embed(questions, category="embeddings"),
                 timeout=self._settings.insights_call_timeout_seconds,
             )
         except (AdapterError, TimeoutError):
@@ -266,10 +286,17 @@ class InsightsService:
         if not clusters:
             summary = "No notable question clusters in this period."
         elif time.monotonic() >= deadline:
-            # Out of budget — skip the model summary rather than risk the worker timeout.
-            summary = "Summary skipped (time budget reached); the cluster data below is complete."
+            # Out of budget — synthesize a deterministic summary from the (complete)
+            # clusters rather than spend a model call we don't have time for. Still
+            # useful, and avoids the apologetic "skipped" placeholder.
+            summary = _fallback_summary(clusters)
         else:
-            summary = await self._summarize(period, in_period, clusters)
+            try:
+                summary = await self._summarize(period, in_period, clusters)
+            except AdapterError:
+                # A transient model failure on the summary alone shouldn't discard a
+                # complete report — fall back to the deterministic summary.
+                summary = _fallback_summary(clusters)
 
         report = InsightsReport(
             id=period.report_id,
@@ -318,7 +345,9 @@ class InsightsService:
         )
         try:
             raw = await asyncio.wait_for(
-                self._adapter.classify(instructions=_ANALYZE_INSTRUCTIONS, text=prompt),
+                self._adapter.classify(
+                    instructions=_ANALYZE_INSTRUCTIONS, text=prompt, category="insights"
+                ),
                 timeout=self._settings.insights_call_timeout_seconds,
             )
         except (AdapterError, TimeoutError):
@@ -341,7 +370,9 @@ class InsightsService:
         )
         try:
             raw = await asyncio.wait_for(
-                self._adapter.classify(instructions=_SUMMARY_INSTRUCTIONS, text=prompt),
+                self._adapter.classify(
+                    instructions=_SUMMARY_INSTRUCTIONS, text=prompt, category="insights"
+                ),
                 timeout=self._settings.insights_call_timeout_seconds,
             )
             return raw.strip()

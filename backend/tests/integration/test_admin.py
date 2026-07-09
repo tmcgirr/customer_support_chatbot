@@ -16,6 +16,7 @@ ADMIN_AUTH = (_settings.admin_username, _settings.admin_password.get_secret_valu
 ADMIN_ROUTES = [
     "/api/v1/admin/system",
     "/api/v1/admin/dashboard",
+    "/api/v1/admin/dashboard/trends",
     "/api/v1/admin/conversations",
     "/api/v1/admin/conversations/cnv_x",
     "/api/v1/admin/requests",
@@ -56,6 +57,20 @@ async def test_dashboard_counts(client: httpx.AsyncClient) -> None:
     assert body["requests"]["by_type"].get("strategy_call", 0) >= 1
     # V1.5 analytics buckets are present (unlabeled conversations count as "unset").
     assert "by_topic" in body["conversations"] and "by_intent" in body["conversations"]
+
+
+async def test_dashboard_trends_shape(client: httpx.AsyncClient) -> None:
+    # No daily_aggregates job runs in tests, so the series is empty — but the
+    # endpoint must still return the documented shape (a `points` list) behind auth.
+    resp = await client.get("/api/v1/admin/dashboard/trends", auth=ADMIN_AUTH)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body == {"points": []}
+
+    # The window is bounded (1..90 days); an out-of-range value is rejected via the
+    # app's validation envelope (400, not FastAPI's default 422).
+    resp = await client.get("/api/v1/admin/dashboard/trends?days=0", auth=ADMIN_AUTH)
+    assert resp.status_code == 400
 
 
 async def test_conversation_list_and_detail_expose_summary(

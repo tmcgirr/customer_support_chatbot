@@ -13,7 +13,7 @@ is a separate, reviewed code change (see [The change workflow](#the-change-workf
 
 ## 1. What the benchmark is
 
-The benchmark is a **golden set** — `backend/eval/golden_set.yaml`, 37 fixed cases. Each case is
+The benchmark is a **golden set** — `backend/eval/golden_set.yaml`, 39 fixed cases. Each case is
 a short scripted conversation plus the behaviour we require:
 
 ```yaml
@@ -55,7 +55,7 @@ docker compose up -d mongo        # the eval needs MongoDB (canonical answers + 
 # For a REAL run, OPENAI_API_KEY must be set (it's in backend/.env for dev).
 ```
 
-A **real run spends OpenAI $** (one model turn per case, ~37 calls per config). To rehearse the
+A **real run spends model $** (one model turn per case, ~39 calls per config). To rehearse the
 flow for free, add `--fake` (a plumbing adapter answers instead of the model — every case will
 "fail" routing, which is expected; it only proves the harness runs).
 
@@ -89,7 +89,18 @@ location — pass a path you'll find (e.g. `~/Desktop/eval-report.pdf`).
 
 ## 4. Adjust what you're testing
 
-You tune three things: the **model**, the **system prompt**, and (rarely) the **cases**.
+You tune four things: the **provider**, the **model**, the **system prompt**, and (rarely) the **cases**.
+
+### Try a different provider (OpenAI or Anthropic/Claude)
+The bot can answer via OpenAI (default) or Anthropic. Benchmark the other provider on the same
+golden set **before** switching the admin Model-provider toggle to it (invariant #15):
+```bash
+uv run python -m eval.run --provider anthropic --report out.html   # uses that provider's configured model
+```
+Needs the provider's key set — `OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY` in `backend/.env`.
+(Embeddings always use OpenAI, so an OpenAI key stays required even when testing Claude. A key that
+targets a proxy such as OpenRouter needs the adapter's base URL pointed at that proxy, otherwise the
+native Anthropic client calls `api.anthropic.com` and fails with `MODEL_UNAVAILABLE`.)
 
 ### Try a different model
 ```bash
@@ -111,13 +122,16 @@ Copy `backend/eval/configs.example.yaml` to `eval/configs.yaml` and list what to
 
 ```yaml
 - name: baseline
+  provider: openai
   model: gpt-5.4-mini
   prompt_version: sys-v1
 - name: new-prompt
+  provider: openai
   model: gpt-5.4-mini
   prompt_version: sys-v2
-- name: bigger-model
-  model: gpt-5.4
+- name: claude            # cross-provider A-B — needs ANTHROPIC_API_KEY
+  provider: anthropic
+  model: claude-haiku-4-5
   prompt_version: sys-v1
 ```
 ```bash
@@ -170,6 +184,7 @@ bot until a reviewed code change ships.
 | `--fake` | plumbing adapter — no model calls, no cost (always exits 0) |
 | `--filter <sub>` | only cases whose id contains `<sub>` |
 | `--show` | print each case's response text + routed intent |
+| `--provider <openai\|anthropic>` | one-off provider override (uses that provider's configured model) |
 | `--model <m>` | one-off model override |
 | `--prompt-version <v>` | one-off system-prompt override (`app/agent/prompts/<v>.md`) |
 | `--compare <yaml>` | A-B named configs, ranked (exploratory — always exits 0) |

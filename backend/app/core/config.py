@@ -20,6 +20,11 @@ _DEFAULT_MONGO_URI = "mongodb://localhost:27017/cadre_chatbot"
 _DEFAULT_CORS = "http://localhost:5273"
 # Minimum length for the session HMAC secret (a real one is `openssl rand -hex 32`).
 _MIN_SESSION_SECRET_LEN = 16
+# Minimum length for admin/viewer passwords in a non-dev env. The real control is the
+# production identity provider (docs/SECURITY_REVIEW_V1.md H2); until that lands this is
+# a stopgap floor so a trivially-weak shared password (there is no login lockout yet)
+# can't ship past the startup guard.
+_MIN_ADMIN_PASSWORD_LEN = 16
 
 # Environments. Only "dev" is allowed to run on the in-repo placeholder config.
 _VALID_ENVS = frozenset({"dev", "staging", "prod"})
@@ -60,11 +65,46 @@ class Settings(BaseSettings):
     mongo_uri: SecretStr = SecretStr(_DEFAULT_MONGO_URI)
 
     # --- Model provider ---
+    # Which provider answers the chat turn. This is the STARTUP DEFAULT; an operator can
+    # switch it at runtime from the admin portal (persisted in app_settings, read by both
+    # the API and the worker). Only a provider whose key is configured can be selected.
+    # Changing the model config still requires the golden gate on the target config
+    # (invariant #15) — the eval runner can target either provider (`--provider`).
+    model_provider: Literal["openai", "anthropic", "openrouter"] = "openai"
+
     openai_api_key: SecretStr = SecretStr("")
     openai_model: str = "gpt-5.4-mini"
     # Approved fallback model, tried once if the primary is MODEL_UNAVAILABLE before
     # any output streams. Empty = no fallback (opt-in per environment).
     openai_fallback_model: str = ""
+    # Hard per-response output-token ceiling on EVERY model call (chat + classify), so a
+    # crafted "write forever" prompt can't run up cost or hold the run lock open on a
+    # long stream (docs/SECURITY_REVIEW_V1.md L1). Sized well above a normal concise
+    # answer; raise per environment if answers are being truncated.
+    openai_max_output_tokens: int = 1500
+
+    # Anthropic (Claude) — the alternate chat provider. All Anthropic types/IDs/errors
+    # stay inside app/agent/adapter.py (invariant #4). Anthropic has no embeddings API,
+    # so the Claude adapter reuses OpenAI embeddings for insights clustering — an OpenAI
+    # key remains required for that feature regardless of the active chat provider.
+    anthropic_api_key: SecretStr = SecretStr("")
+    # Default to the low-cost Claude tier for this public chatbot (Haiku 4.5 ≈ $1/$5 per 1M
+    # tokens, vs Opus 4.8 at $5/$25). Gate any model change on the golden set before promoting.
+    anthropic_model: str = "claude-haiku-4-5"
+    # Approved fallback model (same semantics as openai_fallback_model). Empty = none.
+    anthropic_fallback_model: str = ""
+    # Same per-response output ceiling as OpenAI; Anthropic requires max_tokens on every call.
+    anthropic_max_output_tokens: int = 1500
+
+    # OpenRouter — reach models (including Claude) through OpenRouter's OpenAI-COMPATIBLE
+    # Responses API. It reuses OpenAIResponsesAdapter with a base_url override, so no new
+    # adapter is needed — only a non-native model id (e.g. "anthropic/claude-haiku-4.5") and
+    # this key differ. Insights EMBEDDINGS still go to real OpenAI (an OpenAI key stays
+    # required); OpenRouter is a chat proxy, not an embeddings host. The per-response cap
+    # reuses `openai_max_output_tokens` (same adapter). Gate on the golden set before selecting.
+    openrouter_api_key: SecretStr = SecretStr("")
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_model: str = "anthropic/claude-haiku-4.5"
 
     # --- Knowledge retrieval (set OPENAI_VECTOR_STORE_ID after upload_knowledge.py) ---
     openai_vector_store_id: str = ""
@@ -72,8 +112,9 @@ class Settings(BaseSettings):
     # Tune per environment against the store's score distribution.
     retrieval_min_score: float = 0.0
 
-    # --- Client portal (get_portal_information tool; URL is a placeholder for POC) ---
-    portal_url: str = "https://portal.cadre.ai"
+    # --- Client portal (get_portal_information tool; real URL owned by Client
+    # Success — no public login page yet, so this stays a placeholder) ---
+    portal_url: str = "https://portal.cadreai.com"
     portal_reset_instructions: str = (
         "If you can't sign in, use the 'forgot password' option on the sign-in page. "
         "For security, access issues are handled through a support request — never share "
@@ -89,6 +130,9 @@ class Settings(BaseSettings):
     # --- Abuse caps ---
     message_cap: int = 40
     message_max_chars: int = 2000
+    # Cap the verbatim-question array a conversation accumulates when the model routes
+    # to the unsupported-question canonical (keeps the most recent N; §7 / L7).
+    unsupported_questions_cap: int = 200
     # Per-IP conversation-creation cap over a fixed rolling window (contracts §3.1).
     ip_create_cap: int = 10
     ip_create_window_seconds: int = 3600
@@ -96,6 +140,25 @@ class Settings(BaseSettings):
     # enumeration/abuse of the unauthenticated endpoint.
     privacy_request_ip_cap: int = 5
     privacy_request_ip_window_seconds: int = 3600
+    # Throttle the chat turn (the paid LLM path) per-session AND per-IP. The
+    # per-conversation message_cap bounds the TOTAL turns; these bound the RATE, so a
+    # single session/IP can't drive denial-of-wallet (docs/SECURITY_REVIEW_V1.md M1).
+    # The edge WAF/CDN is the volumetric backstop (§7) — this is app-level defense.
+    message_rate_cap: int = 20
+    message_rate_window_seconds: int = 60
+    message_ip_cap: int = 60
+    message_ip_window_seconds: int = 60
+    # Cap request submissions per-conversation AND per-IP. Each fresh Idempotency-Key
+    # writes a request and (when delivery is on) fires ONE external CRM/ticket delivery,
+    # so an unthrottled session could flood the team inbox (SECURITY_REVIEW_V1 H1).
+    request_conversation_cap: int = 10
+    request_conversation_window_seconds: int = 3600
+    request_ip_cap: int = 20
+    request_ip_window_seconds: int = 3600
+    # Trusted reverse-proxy hops in front of the app (Caddy = 1; set 2 once a CDN/WAF
+    # fronts Caddy). client_ip() reads the real client as the Nth X-Forwarded-For entry
+    # FROM THE RIGHT, so a spoofed leftmost value can't defeat the per-IP caps (M2).
+    trusted_proxy_hops: int = 1
     # A run lock older than this is treated as leaked (crashed mid-turn) and may be
     # released opportunistically so a conversation can't brick at CONVERSATION_BUSY.
     # A LIVE turn heartbeats its lock (~ every lock_stale_seconds/3) so however slow
@@ -123,6 +186,15 @@ class Settings(BaseSettings):
     # Pending-job count above which the worker fires a queue-backlog WARNING alert
     # (dead-letter / delivery-failed / privacy-failed alerts fire on any > 0).
     alert_queue_depth_threshold: int = 100
+
+    # --- LLM cost visibility (admin Usage panel) ---
+    # $/1M-token overrides merged over the built-in price table (defaults live in
+    # app/domain/usage/pricing.py). Format: "model:input:output,model2:input:output".
+    # Correct the PLACEHOLDER OpenAI rates here per environment.
+    llm_pricing_overrides: str = ""
+    # Monthly LLM spend budget in USD for the cost alert + admin budget bar (0 = disabled).
+    llm_monthly_budget_usd: float = 0.0
+
     # Reject any request whose declared Content-Length exceeds this before it is
     # parsed (defends the shared process from an oversized-body memory/disk blowup;
     # well above the 5 MB knowledge-upload cap + multipart overhead, and far above
@@ -252,17 +324,40 @@ class Settings(BaseSettings):
                 f"SESSION_SECRET (placeholder, empty, or under {_MIN_SESSION_SECRET_LEN} chars — "
                 "use `openssl rand -hex 32`)"
             )
-        if _is_placeholder(self.admin_password.get_secret_value()):
+        # Admin auth is a shared HTTP Basic credential with no login lockout yet (the
+        # production IdP replaces it — SECURITY_REVIEW_V1 H2), so the password must be
+        # both non-placeholder AND long enough to resist online guessing.
+        admin_password = self.admin_password.get_secret_value().strip()
+        if _is_placeholder(admin_password):
             problems.append("ADMIN_PASSWORD (placeholder or empty)")
+        elif len(admin_password) < _MIN_ADMIN_PASSWORD_LEN:
+            problems.append(
+                f"ADMIN_PASSWORD (under {_MIN_ADMIN_PASSWORD_LEN} chars — no login lockout "
+                "exists yet; use a long random value)"
+            )
         # The viewer login is optional (empty = disabled), but if one IS set it must be a
         # real secret — a placeholder viewer password grants read access to every transcript.
         viewer_password = self.viewer_password.get_secret_value().strip()
         if viewer_password and _is_placeholder(viewer_password):
             problems.append("VIEWER_PASSWORD (placeholder — set a real value or leave empty)")
+        elif viewer_password and len(viewer_password) < _MIN_ADMIN_PASSWORD_LEN:
+            problems.append(f"VIEWER_PASSWORD (under {_MIN_ADMIN_PASSWORD_LEN} chars)")
         if _is_placeholder(self.openai_api_key.get_secret_value()):
             problems.append("OPENAI_API_KEY (unset or placeholder)")
         if _is_placeholder(self.openai_vector_store_id):
             problems.append("OPENAI_VECTOR_STORE_ID (unset or placeholder)")
+        # Require the Anthropic key only when Claude is the STARTUP provider — an
+        # OpenAI-only deploy must not be forced to hold a Claude key. (Switching TO
+        # Anthropic at runtime is separately gated on the key being configured — the
+        # admin endpoint refuses to select a provider that isn't available.)
+        if self.model_provider == "anthropic" and _is_placeholder(
+            self.anthropic_api_key.get_secret_value()
+        ):
+            problems.append("ANTHROPIC_API_KEY (required when MODEL_PROVIDER=anthropic)")
+        if self.model_provider == "openrouter" and _is_placeholder(
+            self.openrouter_api_key.get_secret_value()
+        ):
+            problems.append("OPENROUTER_API_KEY (required when MODEL_PROVIDER=openrouter)")
         # Mongo must not point at localhost — check the parsed host, not a literal
         # string, so 127.0.0.1 / a different db / query params don't slip through.
         mongo = self.mongo_uri.get_secret_value().strip()

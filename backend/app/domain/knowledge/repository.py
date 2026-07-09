@@ -60,6 +60,7 @@ class KnowledgeSourceRepository:
         effective_date: datetime | None = None,
         review_date: datetime | None = None,
         checksum: str | None = None,
+        content_text: str | None = None,
     ) -> KnowledgeSource:
         """Upsert the governance record for a file, keyed by ``openai_file_id``.
 
@@ -92,6 +93,7 @@ class KnowledgeSourceRepository:
                     "effective_date": effective_date,
                     "review_date": review_date,
                     "checksum": checksum,
+                    "content_text": content_text,
                     "updated_at": now,
                 },
             },
@@ -101,8 +103,12 @@ class KnowledgeSourceRepository:
         return KnowledgeSource.model_validate(result)
 
     async def list_sources(self) -> list[KnowledgeSource]:
-        """Every recorded source, newest first (``_id`` is a time-sortable ULID)."""
-        docs = await self._collection.find().sort("_id", -1).to_list(length=None)
+        """Every recorded source, newest first (``_id`` is a time-sortable ULID).
+
+        ``content_text`` is projected OUT — it can be large and is only needed by the
+        single-document content endpoint (``get``), never the list."""
+        cursor = self._collection.find({}, {"content_text": 0}).sort("_id", -1)
+        docs = await cursor.to_list(length=None)
         return [KnowledgeSource.model_validate(doc) for doc in docs]
 
     async def get(self, source_id: str) -> KnowledgeSource | None:

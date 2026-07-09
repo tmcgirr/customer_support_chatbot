@@ -23,6 +23,7 @@ AuditAction = Literal[
     "approve_knowledge",
     "run_insights",  # V1.5 insights: admin manually triggered a report run
     "propose_faq",  # V1.5 insights: the engine drafted a proposed canonical answer
+    "switch_model_provider",  # admin switched the active chat model provider (OpenAI/Anthropic)
     "export",
     "delete",  # V6: subject erasure executed (also used for content deletion)
 ]

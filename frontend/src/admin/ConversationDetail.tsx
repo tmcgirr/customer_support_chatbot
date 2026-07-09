@@ -17,7 +17,7 @@ export default function ConversationDetail({
 }) {
   const [revealed, setRevealed] = useState<RevealedConversation | null>(null);
   const isAdmin = role === "admin";
-  const { error: actionError, busy, run } = useAdminAction(onAuthError);
+  const { error: actionError, busy, run, dialog } = useAdminAction(onAuthError);
 
   const { data, loading, error } = useAdminQuery(
     () => client.getConversation(id),
@@ -30,11 +30,15 @@ export default function ConversationDetail({
   if (!data) return null;
 
   function handleReveal() {
-    run(
-      "Reason for revealing this transcript (audited):",
-      (reason) => client.revealConversation(id, reason),
-      (result) => setRevealed(result),
-    );
+    run({
+      title: "Reveal PII",
+      message:
+        "Unmask the personal information (names, emails, phone numbers) in this transcript? This is recorded in the audit log.",
+      defaultReason: "Revealed transcript PII via admin console",
+      confirmLabel: "Reveal PII",
+      action: (reason) => client.revealConversation(id, reason),
+      onSuccess: (result) => setRevealed(result),
+    });
   }
 
   // Normalize revealed messages to the same display shape (they carry no status).
@@ -50,6 +54,7 @@ export default function ConversationDetail({
 
   return (
     <div>
+      {dialog}
       <h2>Conversation {data.conversation_id}</h2>
       <p className="admin-muted">
         Status: {data.status} · Outcome: {data.outcome ?? "—"} · Started: {data.started_at}
@@ -70,16 +75,25 @@ export default function ConversationDetail({
       )}
 
       {isAdmin && !revealed && (
-        <p>
-          <button type="button" className="admin-link" disabled={busy} onClick={handleReveal}>
-            Reveal transcript
+        <p className="admin-reveal-line">
+          <button
+            type="button"
+            className="admin-btn admin-btn-ghost admin-btn-sm"
+            disabled={busy}
+            onClick={handleReveal}
+          >
+            Reveal PII
           </button>
+          <span className="admin-muted">
+            Personal details (names, emails, phone numbers) are masked below; revealing is audited.
+          </span>
         </p>
       )}
-      {revealed && <p className="admin-muted">Showing unmasked transcript.</p>}
+      {revealed && <p className="admin-muted">PII revealed — showing the unmasked transcript.</p>}
       {actionError && <p className="admin-error">{actionError}</p>}
 
-      <table className="admin-table">
+      <div className="admin-tablewrap">
+        <table className="admin-table">
         <thead>
           <tr>
             <th>Role</th>
@@ -107,6 +121,7 @@ export default function ConversationDetail({
           )}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

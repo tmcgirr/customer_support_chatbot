@@ -80,7 +80,9 @@ class ConversationLabeler:
             return parse_model_labels("")  # → topic/intent "other", method "model"
         try:
             raw = await asyncio.wait_for(
-                self._adapter.classify(instructions=CLASSIFY_INSTRUCTIONS, text=transcript),
+                self._adapter.classify(
+                    instructions=CLASSIFY_INSTRUCTIONS, text=transcript, category="labeling"
+                ),
                 timeout=self._classify_timeout,
             )
         except (AdapterError, TimeoutError):

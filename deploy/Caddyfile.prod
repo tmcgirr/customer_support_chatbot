@@ -8,9 +8,11 @@
 #   3. Health-gated upstreams so a rolling restart never routes to a dead replica.
 #
 # Edge rate limiting + WAF are a CDN-layer responsibility in production (Cloudflare /
-# DO — a provider decision, doc 06 §6). This layer keeps the app's per-IP abuse caps
-# (create-conversation, privacy-request) as defense-in-depth; put the CDN in front for
-# volumetric/edge protection.
+# DO — a provider decision, doc 06 §6). The app now throttles ALL abuse-prone paths
+# (create-conversation, chat turn, request submit, privacy-request) per-session/per-IP
+# as defense-in-depth, and derives the client IP from the rightmost trusted proxy hop
+# (set trusted_proxy_hops=2 once a CDN fronts Caddy). Still put the CDN in front for
+# volumetric/edge protection + bot mitigation before public traffic.
 #
 # CRITICAL for SSE: `flush_interval -1` disables buffering so `response.delta` events
 # reach the browser immediately, verified through the load balancer.
@@ -24,6 +26,13 @@
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "strict-origin-when-cross-origin"
 		Permissions-Policy "geolocation=(), microphone=(), camera=()"
+		# CSP backstop for the PII-handling admin SPA + the widget (SECURITY_REVIEW_V1
+		# M3). Safe for the Vite build: all scripts are external /assets (no inline
+		# script), so script-src 'self' won't break it; 'unsafe-inline' is styles-only.
+		# connect-src 'self' = same-origin API/SSE. No frame-ancestors here (the WIDGET is
+		# meant to be embedded); the admin console is frame-DENYed below. VERIFY in a
+		# browser at staging before cutover, per DEPLOY_PROD step 2.
+		Content-Security-Policy "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'"
 		-Server
 	}
 
@@ -69,12 +78,14 @@
 		}
 	}
 
-	# Admin console must never be embedded in a frame (widget may be — it is designed
-	# to be embedded by approved host pages, so no frame denial there).
-	@admin path /admin.html
+	# Admin console at a clean /admin URL (also /admin/ and the raw /admin.html). Must
+	# never be embedded in a frame (widget may be — it is designed to be embedded by
+	# approved host pages, so no frame denial there).
+	@admin path /admin /admin/ /admin.html
 	handle @admin {
 		header X-Frame-Options "DENY"
 		root * /srv/www
+		rewrite * /admin.html
 		file_server
 	}
 

@@ -1,7 +1,7 @@
 """Create-conversation endpoint (contracts §3.1)."""
 
 from fastapi import APIRouter, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.agent.prompt import CURRENT_PROMPT_VERSION
 from app.api.deps import RateLimiterDep, RepoDep
@@ -24,9 +24,11 @@ SUGGESTED_ACTIONS = [
 
 
 class CreateConversationRequest(BaseModel):
-    entry_page: str | None = None
-    locale: str | None = None
-    consent_version: str | None = None
+    # Bounded so these metadata fields can't be used to persist multi-MB documents
+    # (SECURITY_REVIEW_V1 L2). A path/locale/version is always small.
+    entry_page: str | None = Field(default=None, max_length=512)
+    locale: str | None = Field(default=None, max_length=32)
+    consent_version: str | None = Field(default=None, max_length=64)
 
 
 class SuggestedAction(BaseModel):

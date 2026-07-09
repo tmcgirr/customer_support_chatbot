@@ -19,12 +19,14 @@ from app.core.config import get_settings
 class EvalConfig:
     name: str
     model: str
+    provider: str = "openai"  # which adapter answers: "openai" | "anthropic"
     fallback_model: str | None = None
     prompt_version: str = CURRENT_PROMPT_VERSION
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
+            "provider": self.provider,
             "model": self.model,
             "fallback_model": self.fallback_model,
             "prompt_version": self.prompt_version,
@@ -32,12 +34,23 @@ class EvalConfig:
 
 
 def current_config() -> EvalConfig:
-    """The config that ships today (from settings) — the gate baseline."""
+    """The config that ships today (from settings) — the gate baseline for whichever
+    provider is the env default."""
     settings = get_settings()
+    if settings.model_provider == "anthropic":
+        model = settings.anthropic_model
+        fallback = settings.anthropic_fallback_model or None
+    elif settings.model_provider == "openrouter":
+        model = settings.openrouter_model
+        fallback = None  # OpenRouter has no separate fallback model configured
+    else:
+        model = settings.openai_model
+        fallback = settings.openai_fallback_model or None
     return EvalConfig(
         name="current",
-        model=settings.openai_model,
-        fallback_model=settings.openai_fallback_model or None,
+        provider=settings.model_provider,
+        model=model,
+        fallback_model=fallback,
         prompt_version=CURRENT_PROMPT_VERSION,
     )
 
@@ -52,6 +65,7 @@ def load_configs(path: Path) -> list[EvalConfig]:
         configs.append(
             EvalConfig(
                 name=str(entry["name"]),
+                provider=str(entry.get("provider", "openai")),
                 model=str(entry["model"]),
                 fallback_model=(
                     str(entry["fallback_model"]) if entry.get("fallback_model") else None

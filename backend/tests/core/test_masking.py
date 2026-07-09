@@ -1,11 +1,24 @@
 import pytest
 
 from app.core.masking import (
+    mask_company,
     mask_email,
     mask_emails_in_text,
     mask_phones_in_text,
     mask_pii_in_text,
 )
+
+
+@pytest.mark.parametrize("value", ["", "   ", None])
+def test_mask_company_absent_is_none(value: str | None) -> None:
+    assert mask_company(value) is None
+
+
+@pytest.mark.parametrize("value", ["Acme", "Globex Corporation", "a"])
+def test_mask_company_present_is_redacted_not_the_name(value: str) -> None:
+    masked = mask_company(value)
+    assert masked is not None
+    assert value not in masked  # the real name never leaks in list views (L5)
 
 
 def test_masks_standard_email() -> None:

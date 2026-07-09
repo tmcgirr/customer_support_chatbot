@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
-import type { KeyboardEvent as ReactKeyboardEvent, ReactNode, RefObject } from "react";
+import type {
+  CSSProperties,
+  KeyboardEvent as ReactKeyboardEvent,
+  ReactNode,
+  RefObject,
+} from "react";
 
 import { postToHost } from "../host/messaging";
 import { Launcher } from "./Launcher";
-import { PrivacyDisclosure } from "./PrivacyDisclosure";
+import { FONT_SCALE_VALUE, useAccessibilityPrefs } from "./useAccessibilityPrefs";
 import { WidgetHeader } from "./WidgetHeader";
 // Import the shared styles from the component so the shell is styled wherever it
 // renders, independent of whoever owns the app entrypoint.
@@ -16,6 +21,10 @@ export interface WidgetFrameProps {
   onToggle: () => void;
   /** Close the panel (fired by the header close button and Esc). */
   onClose: () => void;
+  /** Start a fresh conversation (new thread, cleared transcript) from the header. */
+  onNewChat?: () => void;
+  /** Whether starting a new chat is currently allowed (disabled during boot/reconnect). */
+  canStartNew?: boolean;
   /** Panel body — the conversation view / forms rendered by sibling modules. */
   children: ReactNode;
   /**
@@ -39,8 +48,8 @@ const FOCUSABLE_SELECTOR = [
  * Outer chrome for the widget: the floating launcher plus the chat panel.
  *
  * Responsibilities:
- * - Renders the launcher always; renders the panel (header + scrollable content +
- *   persistent privacy line) only while `open`.
+ * - Renders the launcher always; renders the panel (header + scrollable content)
+ *   only while `open`. The privacy disclosure now lives in the opening message.
  * - Notifies the host of open/close/resize via origin-checked postMessage.
  * - Traps Tab focus inside the panel, moves focus in on open, restores it to the
  *   launcher on close, and closes on Esc.
@@ -49,6 +58,8 @@ export function WidgetFrame({
   open,
   onToggle,
   onClose,
+  onNewChat,
+  canStartNew = true,
   children,
   initialFocusRef,
 }: WidgetFrameProps) {
@@ -56,6 +67,11 @@ export function WidgetFrame({
   const panelRef = useRef<HTMLDivElement>(null);
   const launcherRef = useRef<HTMLButtonElement>(null);
   const wasOpenRef = useRef(false);
+  const { prefs, update: updatePrefs } = useAccessibilityPrefs();
+
+  // Text-size is applied at the widget root so it cascades to the panel and any
+  // forms via the shared --cadre-font-scale token.
+  const rootStyle = { "--cadre-font-scale": FONT_SCALE_VALUE[prefs.fontScale] } as CSSProperties;
 
   /** Report the current widget footprint height to the host. */
   const report = useCallback((type: string) => {
@@ -131,7 +147,7 @@ export function WidgetFrame({
   };
 
   return (
-    <div ref={rootRef} className="cadre-widget">
+    <div ref={rootRef} className="cadre-widget" style={rootStyle}>
       {open && (
         <div
           ref={panelRef}
@@ -141,9 +157,14 @@ export function WidgetFrame({
           tabIndex={-1}
           onKeyDown={handlePanelKeyDown}
         >
-          <WidgetHeader onClose={onClose} />
+          <WidgetHeader
+            onClose={onClose}
+            onNewChat={onNewChat}
+            newChatDisabled={!canStartNew}
+            prefs={prefs}
+            onChangePrefs={updatePrefs}
+          />
           <div className="cadre-panel__content">{children}</div>
-          <PrivacyDisclosure />
         </div>
       )}
       <Launcher ref={launcherRef} open={open} onToggle={onToggle} />

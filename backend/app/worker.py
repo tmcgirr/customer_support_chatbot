@@ -13,11 +13,13 @@ import asyncio
 import contextlib
 import signal
 import time
+from datetime import UTC, datetime
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.agent.adapter import ModelAdapter, OpenAIResponsesAdapter
+from app.agent.adapter import ModelAdapter
+from app.agent.provider import ProviderResolver, build_adapters
 from app.core import ids
 from app.core.config import Settings, get_settings
 from app.core.db import create_mongo_client, get_database
@@ -53,6 +55,9 @@ from app.domain.knowledge.store import KnowledgeStore, build_knowledge_store
 from app.domain.monitoring.alerts import evaluate_alerts
 from app.domain.privacy.repository import PrivacyRequestRepository
 from app.domain.requests.repository import RequestRepository
+from app.domain.settings.repository import SettingsRepository
+from app.domain.usage import service as usage_service
+from app.domain.usage.repository import LlmUsageRepository
 
 logger = get_logger("app.worker")
 
@@ -96,8 +101,21 @@ class Worker:
         self._insights = InsightsReportRepository(db["insights_reports"])
         self._knowledge = KnowledgeSourceRepository(db["knowledge_sources"])
         self._knowledge_store = knowledge_store or build_knowledge_store(settings)
-        # Offline model access for analytics labeling (classify only). Tests inject a fake.
-        self._adapter: ModelAdapter = adapter or OpenAIResponsesAdapter()
+        # Offline model access for analytics labeling (classify) + insights (embed).
+        # Resolved per job from the runtime-active provider so an admin switch is picked
+        # up without a worker restart (TTL-cached). Tests inject a fixed fake adapter.
+        # Worker LLM calls record token usage to the llm_usage rollup via the adapter hook.
+        self._llm_usage = LlmUsageRepository(db["llm_usage"])
+        self._injected_adapter = adapter
+        self._provider_resolver: ProviderResolver | None = (
+            None
+            if adapter is not None
+            else ProviderResolver(
+                build_adapters(settings, on_usage=self._llm_usage.record),
+                SettingsRepository(db["app_settings"]),
+                default=settings.model_provider,
+            )
+        )
         self._aggregates = AggregatesRepository(db["aggregates"])
         self._privacy = PrivacyRequestRepository(db["privacy_requests"])
         self._audit = AuditRepository(db["audit"])
@@ -169,6 +187,16 @@ class Worker:
         request_counts = await self._requests.count_by("status")
         privacy_counts = await self._privacy.counts_by_status()
         logger.info("worker.queue", extra={"context": {"counts": job_counts}})
+        # Month-to-date LLM spend for the budget alert (only when a budget is configured).
+        llm_spend = 0.0
+        if self._settings.llm_monthly_budget_usd > 0:
+            month_start = datetime.now(UTC).replace(
+                day=1, hour=0, minute=0, second=0, microsecond=0
+            )
+            llm_spend = usage_service.total_cost(
+                await self._llm_usage.rows_since(month_start.date().isoformat()),
+                await self._conversations.usage_by_model(month_start),
+            )
         # Emit a pageable ALERT log per firing threshold (a log-based pager alerts on
         # level>=ERROR or on the "worker.alert" event). Static message, counts-only context.
         alerts = evaluate_alerts(
@@ -176,6 +204,8 @@ class Worker:
             request_counts=request_counts,
             privacy_counts=privacy_counts,
             queue_depth_threshold=self._settings.alert_queue_depth_threshold,
+            llm_spend_usd=llm_spend,
+            llm_budget_usd=self._settings.llm_monthly_budget_usd,
         )
         for alert in alerts:
             emit = logger.error if alert.severity == "critical" else logger.warning
@@ -257,6 +287,14 @@ class Worker:
             # "Indexing…") and an operator can re-approve to re-poll.
             await self._knowledge.update_indexing_status(job.resource_id, "failed")
 
+    async def _adapter_for_job(self) -> ModelAdapter:
+        """The model adapter for a model-using job: the injected fake in tests, otherwise
+        the runtime-active provider (resolved fresh so an admin switch is picked up)."""
+        if self._injected_adapter is not None:
+            return self._injected_adapter
+        assert self._provider_resolver is not None
+        return await self._provider_resolver.resolve()
+
     async def _dispatch(self, job: Job) -> None:
         job_type = job.type
         if job_type == "deliver_request":
@@ -290,11 +328,13 @@ class Worker:
             )
         elif job_type == "label_conversations":
             counts = await run_label_conversations(
-                self._conversations, self._requests, self._canonical, self._adapter
+                self._conversations, self._requests, self._canonical, await self._adapter_for_job()
             )
             logger.info("worker.conversations_labeled", extra={"context": {"counts": counts}})
         elif job_type == "summarize_conversations":
-            counts = await run_summarize_conversations(self._conversations, self._adapter)
+            counts = await run_summarize_conversations(
+                self._conversations, await self._adapter_for_job()
+            )
             logger.info("worker.conversations_summarized", extra={"context": {"counts": counts}})
         elif job_type == "generate_insights":
             # resource_id="refresh" (from the admin Run-now button) regenerates the current
@@ -305,7 +345,7 @@ class Worker:
                 self._canonical,
                 self._audit,
                 self._insights,
-                self._adapter,
+                await self._adapter_for_job(),
                 self._settings,
                 mode=mode,
             )

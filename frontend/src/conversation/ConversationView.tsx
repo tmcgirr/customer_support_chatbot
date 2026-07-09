@@ -12,6 +12,7 @@ import type { ErrorAction } from "./ErrorBanner";
 import { ErrorBanner } from "./ErrorBanner";
 import { MessageList } from "./MessageList";
 import type { ConversationStatus } from "./useConversation";
+import { useConversationScroll } from "./useConversationScroll";
 import { WelcomeChips } from "./WelcomeChips";
 
 // Screen-reader-only, applied inline so hiding does not depend on external CSS.
@@ -60,6 +61,11 @@ export function ConversationView({
   composerRef,
 }: ConversationViewProps) {
   const isEmpty = messages.length === 0;
+
+  // Auto-scroll: roll a sent message to the top, then follow the streaming reply.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const spacerRef = useRef<HTMLDivElement>(null);
+  useConversationScroll(scrollRef, spacerRef, messages, status);
 
   // Polite status live region. It announces process transitions only (not message
   // text — the log region below carries that): a turn STARTING ("Assistant is
@@ -120,16 +126,10 @@ export function ConversationView({
         {liveAnnouncement}
       </div>
 
-      {/* Message transcript as a log: new messages are announced politely, but only
-          node ADDITIONS (a new bubble) — not token-by-token text mutations of the
-          streaming bubble, so partial text never spams the screen reader. */}
-      <div
-        className="cadre-conversation-scroll"
-        role="log"
-        aria-live="polite"
-        aria-relevant="additions"
-        aria-label="Conversation"
-      >
+      {/* Scroll viewport. The welcome + loading states sit here but OUTSIDE the log
+          region below, so re-showing the welcome (e.g. on "New chat") never injects
+          its verbatim privacy text into the live region. */}
+      <div className="cadre-conversation-scroll" ref={scrollRef}>
         {isEmpty && welcome && <WelcomeChips welcome={welcome} onSelect={onSelectAction} />}
         {isEmpty && !welcome && status === "creating" && (
           <p className="cadre-loading">Starting chat…</p>
@@ -137,7 +137,17 @@ export function ConversationView({
         {isEmpty && status === "reconnecting" && (
           <p className="cadre-loading">{RECONNECTING_STATUS}</p>
         )}
-        <MessageList messages={messages} onSelectAction={onSelectAction} onRate={onRate} />
+
+        {/* Message transcript as a log: new messages are announced politely, but only
+            node ADDITIONS (a new bubble) — not token-by-token text mutations of the
+            streaming bubble, so partial text never spams the screen reader. */}
+        <div role="log" aria-live="polite" aria-relevant="additions" aria-label="Conversation">
+          <MessageList messages={messages} onSelectAction={onSelectAction} onRate={onRate} />
+        </div>
+
+        {/* Grows so a just-sent message can roll to the top; height owned by the
+            scroll hook. */}
+        <div ref={spacerRef} className="cadre-scroll-spacer" aria-hidden="true" />
       </div>
 
       {error && (

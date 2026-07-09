@@ -9,6 +9,18 @@
 {$STAGING_DOMAIN} {
 	encode zstd gzip
 
+	# Mirror the prod security headers (SECURITY_REVIEW_V1 M3 — staging previously had
+	# none, so its admin console was frameable and downgrade-able while using the same
+	# credential shape as prod). Keep this block in lockstep with Caddyfile.prod.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "geolocation=(), microphone=(), camera=()"
+		Content-Security-Policy "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'"
+		-Server
+	}
+
 	# Reject oversized bodies at the edge (defense-in-depth for the app's own
 	# Content-Length guard; also covers chunked bodies with no Content-Length).
 	# Comfortably above the 5 MB knowledge-upload cap + multipart overhead.
@@ -27,7 +39,18 @@
 		reverse_proxy api:8000
 	}
 
-	# Widget (index.html) + admin (admin.html) static build.
+	# Admin console at a clean /admin URL (also /admin/ and the raw /admin.html). Must
+	# never be embedded in a frame (the widget may be — it is designed to be embedded by
+	# approved host pages, so no frame denial there).
+	@admin path /admin /admin/ /admin.html
+	handle @admin {
+		header X-Frame-Options "DENY"
+		root * /srv/www
+		rewrite * /admin.html
+		file_server
+	}
+
+	# Widget (index.html) + admin assets static build.
 	handle {
 		root * /srv/www
 		try_files {path} {path}/ /index.html
