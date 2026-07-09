@@ -61,6 +61,7 @@ export interface ConversationSummary {
   status: string;
   outcome: string | null;
   message_count: number;
+  summary: string | null; // computed TL;DR (null until the summarizer runs)
   started_at: string;
   last_activity_at: string;
 }
@@ -81,6 +82,8 @@ export interface ConversationDetailResponse {
   conversation_id: string;
   status: string;
   outcome: string | null;
+  summary: string | null; // computed TL;DR
+  key_points: string[]; // computed key points
   started_at: string;
   messages: ConversationMessage[];
 }

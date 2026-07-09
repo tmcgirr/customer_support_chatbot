@@ -192,6 +192,47 @@ async def test_generate_insights_clusters_and_auto_drafts(db: Database) -> None:
     assert await db["canonical_answers"].count_documents({"intent": draft_intent}) == 1
 
 
+async def test_summarize_conversations_sets_digest_and_is_idempotent(db: Database) -> None:
+    from app.domain.conversations.models import Conversation, Message
+    from app.domain.jobs.tasks import run_summarize_conversations
+    from tests.fakes import FakeAdapter
+
+    conversations = ConversationRepository(db["conversations"])
+    now = datetime.now(UTC)
+    ended = Conversation(
+        id="cnv_s",
+        status="completed",
+        message_count=1,
+        started_at=now,
+        last_activity_at=now,
+        messages=[Message(id="m", role="user", content="What is your pricing?", created_at=now)],
+    )
+    await db["conversations"].insert_one(ended.model_dump(by_alias=True))
+    # Active (not ended) → must NOT be summarized.
+    active = Conversation(
+        id="cnv_a",
+        status="active",
+        message_count=1,
+        started_at=now,
+        last_activity_at=now,
+        messages=[Message(id="m", role="user", content="hi there", created_at=now)],
+    )
+    await db["conversations"].insert_one(active.model_dump(by_alias=True))
+
+    adapter = FakeAdapter(classify_result='{"tldr":"Pricing question.","key_points":["pricing"]}')
+    result = await run_summarize_conversations(conversations, adapter)
+    assert result == {"scanned": 1, "summarized": 1}
+
+    done = await conversations.get_transcript("cnv_s")
+    assert done is not None and done.summary is not None
+    assert done.summary.tldr == "Pricing question." and done.summary.key_points == ["pricing"]
+    still_active = await conversations.get_transcript("cnv_a")
+    assert still_active is not None and still_active.summary is None  # active skipped
+
+    again = await run_summarize_conversations(conversations, adapter)
+    assert again == {"scanned": 0, "summarized": 0}  # idempotent
+
+
 async def test_ensure_latest_regenerates_a_partial_daily(db: Database) -> None:
     # A manual run mid-day writes daily:<today> before the day closes; after the boundary
     # the scheduled ensure_latest must REGENERATE it (else the last-complete daily is a

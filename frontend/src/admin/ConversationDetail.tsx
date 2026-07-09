@@ -55,6 +55,20 @@ export default function ConversationDetail({
         Status: {data.status} · Outcome: {data.outcome ?? "—"} · Started: {data.started_at}
       </p>
 
+      {data.summary && (
+        <div className="admin-card">
+          <h3>Summary</h3>
+          <p className="admin-content">{data.summary}</p>
+          {data.key_points.length > 0 && (
+            <ul className="admin-reveal-fields">
+              {data.key_points.map((point, i) => (
+                <li key={i}>{point}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
       {isAdmin && !revealed && (
         <p>
           <button type="button" className="admin-link" disabled={busy} onClick={handleReveal}>

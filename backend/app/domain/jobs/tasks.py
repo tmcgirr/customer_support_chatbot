@@ -12,6 +12,7 @@ from app.agent.adapter import ModelAdapter
 from app.core.config import Settings
 from app.domain.aggregates.repository import AggregatesRepository
 from app.domain.analytics.labeler import ConversationLabeler
+from app.domain.analytics.summarizer import ConversationSummarizer
 from app.domain.audit.repository import AuditRepository
 from app.domain.canonical.repository import CanonicalAnswerRepository
 from app.domain.conversations.repository import (
@@ -114,6 +115,34 @@ async def run_label_conversations(
         if time.monotonic() >= deadline:
             break  # stop before the worker's hard job timeout; the rest go next run
     return {"scanned": scanned, "labeled": labeled}
+
+
+async def run_summarize_conversations(
+    conversations: ConversationRepository,
+    adapter: ModelAdapter,
+    *,
+    batch_limit: int = 100,
+    time_budget_seconds: float = 30.0,
+) -> dict[str, int]:
+    """Summarize ended, un-summarized conversations into a {tldr, key_points} digest (one
+    model call each). Idempotent — already-summarized are skipped, and a model failure leaves
+    a conversation un-summarized to retry next run (never dead-letters). Wall-clock-budgeted so
+    a large backlog can't run the handler past the worker's job timeout; drains over runs."""
+    pending = await conversations.list_unsummarized_ended(limit=batch_limit)
+    summarizer = ConversationSummarizer(adapter)
+    deadline = time.monotonic() + time_budget_seconds
+    now = _now()
+    scanned = 0
+    summarized = 0
+    for conversation in pending:
+        scanned += 1
+        digest = await summarizer.summarize(conversation, now=now)
+        if digest is not None:
+            await conversations.set_summary(conversation.id, digest)
+            summarized += 1
+        if time.monotonic() >= deadline:
+            break
+    return {"scanned": scanned, "summarized": summarized}
 
 
 async def run_generate_insights(

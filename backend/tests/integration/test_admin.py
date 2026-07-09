@@ -1,9 +1,12 @@
+from datetime import UTC, datetime
+
 import httpx
 import pytest
 
 from app.agent.adapter import Completed, TextDelta, ToolCall
 from app.core.config import get_settings
 from tests.fakes import FakeAdapter
+from tests.integration.conftest import Collection
 from tests.integration.test_chat import _create, _send_sse
 from tests.integration.test_requests import _strategy_payload, _submit
 
@@ -53,6 +56,43 @@ async def test_dashboard_counts(client: httpx.AsyncClient) -> None:
     assert body["requests"]["by_type"].get("strategy_call", 0) >= 1
     # V1.5 analytics buckets are present (unlabeled conversations count as "unset").
     assert "by_topic" in body["conversations"] and "by_intent" in body["conversations"]
+
+
+async def test_conversation_list_and_detail_expose_summary(
+    client: httpx.AsyncClient, collection: Collection
+) -> None:
+    now = datetime.now(UTC)
+    await collection.insert_one(
+        {
+            "_id": "cnv_sum",
+            "status": "completed",
+            "message_count": 2,
+            "summary": {
+                "tldr": "Asked about pricing.",
+                "key_points": ["pricing", "no public rates"],
+                "summarized_at": now,
+            },
+            "messages": [
+                {
+                    "id": "m",
+                    "role": "user",
+                    "content": "pricing?",
+                    "status": "completed",
+                    "created_at": now,
+                }
+            ],
+            "started_at": now,
+            "last_activity_at": now,
+        }
+    )
+    listed = await client.get("/api/v1/admin/conversations", auth=ADMIN_AUTH)
+    item = next(c for c in listed.json()["conversations"] if c["conversation_id"] == "cnv_sum")
+    assert item["summary"] == "Asked about pricing."
+
+    detail = await client.get("/api/v1/admin/conversations/cnv_sum", auth=ADMIN_AUTH)
+    body = detail.json()
+    assert body["summary"] == "Asked about pricing."
+    assert body["key_points"] == ["pricing", "no public rates"]
 
 
 async def test_conversation_detail_shows_trace_metadata(

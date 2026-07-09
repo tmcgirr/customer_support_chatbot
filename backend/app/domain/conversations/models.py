@@ -70,6 +70,16 @@ class ConversationLabels(BaseModel):
     labeled_at: datetime
 
 
+class ConversationDigest(BaseModel):
+    """A short model-written summary of an ended conversation (V1.5), so admins can scan
+    the list without opening each transcript. Computed off the worker, never on the request
+    path; stores no raw transcript beyond the summary the model produced."""
+
+    tldr: str  # 1-2 sentence recap
+    key_points: list[str] = Field(default_factory=list)
+    summarized_at: datetime
+
+
 class Conversation(BaseModel):
     # populate_by_name lets us construct with `id=` while Mongo stores `_id`;
     # protected_namespaces=() allows the contract field named `model`.
@@ -86,6 +96,7 @@ class Conversation(BaseModel):
     outcome: str | None = None
     unsupported_questions: list[UnsupportedQuestion] = Field(default_factory=list)
     labels: ConversationLabels | None = None  # computed post-hoc by the analytics labeler
+    summary: ConversationDigest | None = None  # computed post-hoc by the async summarizer
     prompt_version: str | None = None
     model: str | None = None
     schema_version: int = 1

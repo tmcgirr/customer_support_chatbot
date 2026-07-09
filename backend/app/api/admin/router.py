@@ -82,6 +82,7 @@ class ConversationSummary(BaseModel):
     status: str
     outcome: str | None
     message_count: int
+    summary: str | None = None  # computed TL;DR (null until the summarizer runs)
     started_at: datetime
     last_activity_at: datetime
 
@@ -107,6 +108,8 @@ class ConversationDetail(BaseModel):
     conversation_id: str
     status: str
     outcome: str | None
+    summary: str | None = None  # computed TL;DR
+    key_points: list[str] = []  # computed key points
     started_at: datetime
     messages: list[AdminMessage]
 
@@ -397,6 +400,7 @@ async def list_conversations(_admin: AdminDep, repo: RepoDep) -> ConversationLis
                 status=c.status,
                 outcome=c.outcome,
                 message_count=c.message_count,
+                summary=c.summary.tldr if c.summary else None,
                 started_at=c.started_at,
                 last_activity_at=c.last_activity_at,
             )
@@ -416,6 +420,8 @@ async def conversation_detail(
         conversation_id=conversation.id,
         status=conversation.status,
         outcome=conversation.outcome,
+        summary=conversation.summary.tldr if conversation.summary else None,
+        key_points=conversation.summary.key_points if conversation.summary else [],
         started_at=conversation.started_at,
         messages=[
             AdminMessage(

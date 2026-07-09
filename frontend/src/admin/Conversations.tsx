@@ -45,6 +45,7 @@ export default function Conversations({
       <thead>
         <tr>
           <th>Conversation ID</th>
+          <th>Summary</th>
           <th>Status</th>
           <th>Outcome</th>
           <th className="admin-num">Messages</th>
@@ -54,7 +55,7 @@ export default function Conversations({
       <tbody>
         {data.conversations.length === 0 ? (
           <tr>
-            <td colSpan={5} className="admin-muted">
+            <td colSpan={6} className="admin-muted">
               No conversations.
             </td>
           </tr>
@@ -66,6 +67,7 @@ export default function Conversations({
               onClick={() => setSelectedId(c.conversation_id)}
             >
               <td>{c.conversation_id}</td>
+              <td className="admin-content">{c.summary ?? <span className="admin-muted">—</span>}</td>
               <td>{c.status}</td>
               <td>{c.outcome ?? "—"}</td>
               <td className="admin-num">{c.message_count}</td>

@@ -15,7 +15,12 @@ from pymongo import ASCENDING, DESCENDING, ReturnDocument
 
 from app.core import ids
 from app.core.config import get_settings
-from app.domain.conversations.models import Conversation, ConversationLabels, Message
+from app.domain.conversations.models import (
+    Conversation,
+    ConversationDigest,
+    ConversationLabels,
+    Message,
+)
 
 Collection = AsyncIOMotorCollection[dict[str, Any]]
 
@@ -365,6 +370,30 @@ class ConversationRepository:
         last_activity_at — a background annotation must not resurrect a conversation."""
         await self._collection.update_one(
             {"_id": conversation_id}, {"$set": {"labels": labels.model_dump()}}
+        )
+
+    async def list_unsummarized_ended(self, *, limit: int) -> list[Conversation]:
+        """Ended conversations with at least one user message and no digest yet (oldest
+        first, FIFO drain). ``{summary: null}`` matches both missing and null."""
+        docs = (
+            await self._collection.find(
+                {
+                    "status": {"$in": list(self._ENDED_STATUSES)},
+                    "summary": None,
+                    "message_count": {"$gte": 1},
+                }
+            )
+            .sort("last_activity_at", ASCENDING)
+            .limit(limit)
+            .to_list(length=limit)
+        )
+        return [Conversation.model_validate(doc) for doc in docs]
+
+    async def set_summary(self, conversation_id: str, digest: ConversationDigest) -> None:
+        """Attach a computed summary digest (idempotent). Does NOT touch last_activity_at —
+        a background annotation must not resurrect a conversation."""
+        await self._collection.update_one(
+            {"_id": conversation_id}, {"$set": {"summary": digest.model_dump()}}
         )
 
     async def list_ended_in_window(

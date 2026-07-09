@@ -332,6 +332,28 @@ describe("AdminApp", () => {
     await waitFor(() => expect(approveKnowledge).toHaveBeenCalledWith("kbs_1", "audit reason"));
   });
 
+  it("shows the conversation TL;DR summary in the conversations list", async () => {
+    listConversations.mockResolvedValue({
+      conversations: [
+        {
+          conversation_id: "cnv_1",
+          status: "completed",
+          outcome: null,
+          message_count: 3,
+          summary: "Visitor asked about pricing tiers.",
+          started_at: "2026-07-01",
+          last_activity_at: "2026-07-01",
+        },
+      ],
+    });
+    render(<AdminApp />);
+    signIn();
+    await screen.findByText("admin (admin)");
+
+    fireEvent.click(screen.getByRole("button", { name: "Conversations" }));
+    expect(await screen.findByText("Visitor asked about pricing tiers.")).toBeInTheDocument();
+  });
+
   it("renders the conversion funnel with overall + topic breakdown", async () => {
     render(<AdminApp />);
     signIn();

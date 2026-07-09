@@ -46,6 +46,7 @@ from app.domain.jobs.tasks import (
     run_reconcile_deliveries,
     run_retention_sweep,
     run_stale_lock_sweep,
+    run_summarize_conversations,
 )
 from app.domain.knowledge.repository import KnowledgeSourceRepository
 from app.domain.knowledge.store import KnowledgeStore, build_knowledge_store
@@ -65,6 +66,7 @@ _SCHEDULE: dict[JobType, int] = {
     "delivery_reconcile": 300,
     "daily_aggregates": 86_400,
     "label_conversations": 3600,  # hourly: keep the analytics dashboard reasonably fresh
+    "summarize_conversations": 3600,  # hourly: TL;DR-summarize ended conversations
     # Hourly check that each enabled horizon's last-complete report exists — fires once per
     # period near its boundary (daily just after UTC midnight), idempotent no-op otherwise.
     "generate_insights": 3600,
@@ -291,6 +293,9 @@ class Worker:
                 self._conversations, self._requests, self._canonical, self._adapter
             )
             logger.info("worker.conversations_labeled", extra={"context": {"counts": counts}})
+        elif job_type == "summarize_conversations":
+            counts = await run_summarize_conversations(self._conversations, self._adapter)
+            logger.info("worker.conversations_summarized", extra={"context": {"counts": counts}})
         elif job_type == "generate_insights":
             # resource_id="refresh" (from the admin Run-now button) regenerates the current
             # in-progress periods; the scheduled job (no resource_id) ensures last-complete.
