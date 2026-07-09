@@ -207,6 +207,36 @@ async def test_approve_missing_draft_rejected(
     assert await audit_collection.count_documents({"action": "approve_canonical"}) == 0
 
 
+async def test_monitoring_reports_operational_counts(
+    client: httpx.AsyncClient, requests_collection: Collection, jobs_collection: Collection
+) -> None:
+    # A parked delivery + a dead-lettered job should surface as alert counters.
+    await _insert_request(requests_collection, status="delivery_failed")
+    await jobs_collection.insert_one(
+        {
+            "_id": "job_dl",
+            "type": "deliver_request",
+            "resource_id": "req_x",
+            "status": "dead_letter",
+            "attempts": 5,
+            "max_attempts": 5,
+            "available_at": datetime.now(UTC),
+            "created_at": datetime.now(UTC),
+        }
+    )
+    resp = await client.get("/api/v1/admin/monitoring", auth=ADMIN_AUTH)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["delivery_failed"] == 1
+    assert body["dead_letter"] == 1
+    assert "queue_depth" in body and "privacy_by_status" in body
+
+
+async def test_monitoring_readable_by_viewer(client: httpx.AsyncClient) -> None:
+    resp = await client.get("/api/v1/admin/monitoring", auth=VIEWER_AUTH)
+    assert resp.status_code == 200  # read-only signal, either role
+
+
 async def test_audit_list_shows_actions(
     client: httpx.AsyncClient, requests_collection: Collection
 ) -> None:

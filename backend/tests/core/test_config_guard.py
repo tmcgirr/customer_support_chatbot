@@ -48,6 +48,15 @@ def test_invalid_env_rejected() -> None:
         ("openai_vector_store_id", "", "OPENAI_VECTOR_STORE_ID"),
         ("mongo_uri", SecretStr("mongodb://localhost:27017/cadre_chatbot"), "MONGO_URI"),
         ("cors_origins", "http://localhost:5273", "CORS_ORIGINS"),
+        # The EXACT placeholder tokens shipped in deploy/*.env.example must be rejected —
+        # an operator who copies the example and forgets a secret must NOT boot in prod.
+        ("session_secret", SecretStr("REPLACE_WITH_RANDOM"), "SESSION_SECRET"),
+        ("admin_password", SecretStr("REPLACE_WITH_STRONG_RANDOM"), "ADMIN_PASSWORD"),
+        ("viewer_password", SecretStr("REPLACE_WITH_RANDOM"), "VIEWER_PASSWORD"),
+        ("openai_api_key", SecretStr("sk-PROD-REPLACE_ME"), "OPENAI_API_KEY"),
+        ("openai_vector_store_id", "vs_PROD_REPLACE_ME", "OPENAI_VECTOR_STORE_ID"),
+        # A too-short session secret (real-looking but weak entropy) is also rejected.
+        ("session_secret", SecretStr("short"), "SESSION_SECRET"),
     ],
 )
 def test_prod_rejects_missing_or_default_input(field: str, value: object, needle: str) -> None:

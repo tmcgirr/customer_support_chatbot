@@ -134,6 +134,11 @@ class PrivacyRequestRepository:
 
     # --- Read-only admin queries ---
 
+    async def counts_by_status(self) -> dict[str, int]:
+        """status -> count, for the monitoring endpoint (no PII)."""
+        cursor = self._collection.aggregate([{"$group": {"_id": "$status", "count": {"$sum": 1}}}])
+        return {str(doc["_id"]): int(doc["count"]) for doc in await cursor.to_list(length=None)}
+
     async def list_recent(self, limit: int = 100) -> list[PrivacyRequest]:
         docs = (
             await self._collection.find().sort("created_at", -1).limit(limit).to_list(length=limit)

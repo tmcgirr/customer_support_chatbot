@@ -440,3 +440,34 @@ Choices made during implementation that the planning docs did not fully specify
   placeholders; public citation behavior (Product/Marketing) — shipped with the flag OFF.
 - **Verified:** 42 frontend tests (resume-on-mount, expiry recovery, drop-reconcile success +
   misclassification guard, create-failure recovery, a11y axe) + 249 backend.
+
+## Phase V8 — Production deployment & V1 public gate
+
+- **2026-07-08 · Production is the staging shape, hardened.** `deploy/docker-compose.prod.yml`
+  drops the in-stack Mongo (managed via MONGO_URI — Atlas-vs-self-hosted is Engineering's
+  open decision), scales the stateless API behind a load-balancing Caddy (`Caddyfile.prod`,
+  dynamic round-robin upstreams, SSE `flush_interval -1`, security headers), and supervises a
+  single worker (atomic claim makes >1 safe; one avoids redundant scheduling). Verified on a
+  local 2-replica stack: round-robin split, progressive SSE through the LB, cross-replica
+  statelessness. Actual prod provisioning awaits the Mongo choice + prod OpenAI project + domain.
+- **2026-07-08 · Monitoring is an admin-gated, IDs-only endpoint.** `GET /api/v1/admin/monitoring`
+  exposes queue depth, dead-letter, delivery-failed, privacy-failed counts (no PII, invariant #5)
+  for an alerting scraper; thresholds are in `docs/RUNBOOK_PROD.md`. Edge rate-limiting/WAF is a
+  CDN provider decision; the app's per-IP caps are the baseline.
+- **2026-07-08 · Backups have a tested restore.** `scripts/backup_mongo.sh` + `restore_mongo.sh`;
+  the restore DRILL (dump → restore into a scratch DB → collection counts match → drop) was run
+  on staging as the gate evidence, and is documented as a monthly runbook task.
+- **Adversarial-review fixes (1 HIGH, 2 MED, 1 LOW; 2 false positives dropped).** (HIGH) the
+  fail-closed guard only rejected the in-code default `dev-only-change-me`, NOT the `REPLACE_*`
+  tokens the `*.env.example` files ship — so an operator who left a secret placeholder would boot
+  prod with a repo-published admin password / session secret. `_is_placeholder` now rejects any
+  value containing "replace" (plus empty / the dev default) across SESSION_SECRET, ADMIN_PASSWORD,
+  VIEWER_PASSWORD, OPENAI_API_KEY, OPENAI_VECTOR_STORE_ID, and enforces a ≥16-char session secret;
+  guard tests feed the actual example tokens. (MED) `/monitoring` + `/dashboard` unresolved count
+  saturated at 1000 and materialized rows — replaced with a server-side `count_unsupported()`
+  aggregation. (MED) `Caddyfile.prod` added passive health (`fail_duration`/`max_fails`) + in-request
+  retry (`lb_try_duration`/`lb_try_interval`) so a rolling restart never surfaces a 502. (LOW)
+  prod.env.example clarifies the fallback model must DIFFER from the primary.
+- **Verified:** golden 35/35 on the real-model config; 257 backend tests; `caddy validate` clean.
+  Go/no-go + the full gate→evidence mapping is `docs/V1_EXIT_REPORT.md`. Launch is gated on the
+  doc 06 §6 external-owner decisions, not engineering.

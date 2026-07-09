@@ -365,6 +365,16 @@ class ConversationRepository:
         )
         return [Conversation.model_validate(doc) for doc in docs]
 
+    async def count_unsupported(self) -> int:
+        """Total unsupported questions across all conversations — a server-side sum, so
+        it neither saturates at a list limit nor materializes rows (used by /monitoring)."""
+        pipeline: list[dict[str, Any]] = [
+            {"$match": {"unsupported_questions.0": {"$exists": True}}},
+            {"$group": {"_id": None, "n": {"$sum": {"$size": "$unsupported_questions"}}}},
+        ]
+        docs = await self._collection.aggregate(pipeline).to_list(length=1)
+        return int(docs[0]["n"]) if docs else 0
+
     async def list_unsupported(self, limit: int = 100) -> list[dict[str, Any]]:
         pipeline: list[dict[str, Any]] = [
             {"$match": {"unsupported_questions.0": {"$exists": True}}},

@@ -187,10 +187,49 @@ class MeResponse(BaseModel):
     role: str
 
 
+class MonitoringResponse(BaseModel):
+    """Machine-scrapable operational signals (admin-gated, no PII) — the source for
+    the V1 alerts: queue depth, dead-letter, delivery failures, stuck erasures."""
+
+    jobs_by_status: dict[str, int]  # pending/running/done/failed/dead_letter
+    queue_depth: int  # pending jobs waiting to run
+    dead_letter: int  # jobs that exhausted retries (ALERT if > 0)
+    requests_by_status: dict[str, int]
+    delivery_failed: int  # parked deliveries needing admin redeliver (ALERT if > 0)
+    privacy_by_status: dict[str, int]
+    privacy_failed: int  # verified erasures that couldn't complete (ALERT if > 0)
+    unresolved_questions: int
+
+
 @router.get("/me", response_model=MeResponse)
 async def me(admin: AdminDep) -> MeResponse:
     """The authenticated principal + role, so the UI can hide admin-only actions."""
     return MeResponse(username=admin.username, role=admin.role)
+
+
+@router.get("/monitoring", response_model=MonitoringResponse)
+async def monitoring(
+    _admin: AdminDep,
+    repo: RepoDep,
+    request_repo: RequestRepoDep,
+    jobs: JobRepoDep,
+    privacy: PrivacyRepoDep,
+) -> MonitoringResponse:
+    """Operational counters for the alerting stack (scrape on an interval). All
+    counts are IDs-only aggregates — never message content or PII (invariant #5)."""
+    job_counts = await jobs.counts()
+    request_counts = await request_repo.count_by("status")
+    privacy_counts = await privacy.counts_by_status()
+    return MonitoringResponse(
+        jobs_by_status=job_counts,
+        queue_depth=job_counts.get("pending", 0),
+        dead_letter=job_counts.get("dead_letter", 0),
+        requests_by_status=request_counts,
+        delivery_failed=request_counts.get("delivery_failed", 0),
+        privacy_by_status=privacy_counts,
+        privacy_failed=privacy_counts.get("failed", 0),
+        unresolved_questions=await repo.count_unsupported(),
+    )
 
 
 @router.get("/system", response_model=SystemResponse)
@@ -210,7 +249,6 @@ async def system(_admin: AdminDep) -> SystemResponse:
 async def dashboard(
     _admin: AdminDep, repo: RepoDep, request_repo: RequestRepoDep
 ) -> DashboardResponse:
-    unresolved = await repo.list_unsupported(limit=1000)
     return DashboardResponse(
         conversations=ConversationStats(
             total=await repo.total(),
@@ -222,7 +260,7 @@ async def dashboard(
             by_type=await request_repo.count_by("type"),
             by_status=await request_repo.count_by("status"),
         ),
-        unresolved_questions=len(unresolved),
+        unresolved_questions=await repo.count_unsupported(),
     )
 
 

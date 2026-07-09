@@ -17,6 +17,8 @@ from app import __version__
 _INSECURE_DEFAULT = "dev-only-change-me"
 _DEFAULT_MONGO_URI = "mongodb://localhost:27017/cadre_chatbot"
 _DEFAULT_CORS = "http://localhost:5273"
+# Minimum length for the session HMAC secret (a real one is `openssl rand -hex 32`).
+_MIN_SESSION_SECRET_LEN = 16
 
 # Environments. Only "dev" is allowed to run on the in-repo placeholder config.
 _VALID_ENVS = frozenset({"dev", "staging", "prod"})
@@ -25,6 +27,15 @@ _LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 def _is_local_host(host: str | None) -> bool:
     return host is not None and host.strip("[]").lower() in _LOCAL_HOSTS
+
+
+def _is_placeholder(value: str) -> bool:
+    """A value that is empty, the in-repo dev default, or a template placeholder that
+    was never replaced. The `*.env.example` files ship `REPLACE_*` tokens, so any value
+    containing "replace" is an un-edited placeholder — the guard MUST reject these in a
+    non-dev env, or a half-configured deploy boots with repo-published secrets."""
+    v = value.strip().lower()
+    return v == "" or v == _INSECURE_DEFAULT or "replace" in v
 
 
 class Settings(BaseSettings):
@@ -174,21 +185,27 @@ class Settings(BaseSettings):
         if self.env == "dev":
             return self
         problems: list[str] = []
-        # Placeholder / empty secrets must be replaced (strip so whitespace-only
-        # values — which "look set" — are still rejected).
-        if self.session_secret.get_secret_value().strip() in ("", _INSECURE_DEFAULT):
-            problems.append("SESSION_SECRET (placeholder or empty)")
-        if self.admin_password.get_secret_value().strip() in ("", _INSECURE_DEFAULT):
+        # Placeholder / empty / un-replaced-template secrets must be rejected. `_is_placeholder`
+        # catches "", the dev default, AND the `REPLACE_*` tokens the env.example files ship, so
+        # an operator who copies the example and forgets a secret never boots with a repo-known
+        # value. The session secret additionally needs real length/entropy.
+        session_secret = self.session_secret.get_secret_value().strip()
+        if _is_placeholder(session_secret) or len(session_secret) < _MIN_SESSION_SECRET_LEN:
+            problems.append(
+                f"SESSION_SECRET (placeholder, empty, or under {_MIN_SESSION_SECRET_LEN} chars — "
+                "use `openssl rand -hex 32`)"
+            )
+        if _is_placeholder(self.admin_password.get_secret_value()):
             problems.append("ADMIN_PASSWORD (placeholder or empty)")
-        # The viewer login is optional (empty = disabled), but if one IS set it must
-        # be a real secret — a placeholder viewer password grants read access to every
-        # transcript, so the fail-closed guard must cover it too (not just admin).
-        if self.viewer_password.get_secret_value().strip() == _INSECURE_DEFAULT:
+        # The viewer login is optional (empty = disabled), but if one IS set it must be a
+        # real secret — a placeholder viewer password grants read access to every transcript.
+        viewer_password = self.viewer_password.get_secret_value().strip()
+        if viewer_password and _is_placeholder(viewer_password):
             problems.append("VIEWER_PASSWORD (placeholder — set a real value or leave empty)")
-        if not self.openai_api_key.get_secret_value().strip():
-            problems.append("OPENAI_API_KEY (unset)")
-        if not self.openai_vector_store_id.strip():
-            problems.append("OPENAI_VECTOR_STORE_ID (unset)")
+        if _is_placeholder(self.openai_api_key.get_secret_value()):
+            problems.append("OPENAI_API_KEY (unset or placeholder)")
+        if _is_placeholder(self.openai_vector_store_id):
+            problems.append("OPENAI_VECTOR_STORE_ID (unset or placeholder)")
         # Mongo must not point at localhost — check the parsed host, not a literal
         # string, so 127.0.0.1 / a different db / query params don't slip through.
         mongo = self.mongo_uri.get_secret_value().strip()
