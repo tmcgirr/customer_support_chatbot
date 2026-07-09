@@ -343,6 +343,50 @@ table {
   font-size: 13px;
 }
 
+/* Knowledge-gap ranking (cross-report, newest-first) */
+.admin-gaps {
+  margin: 12px 0 20px;
+}
+
+.admin-gaps > h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+
+.admin-gap-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.admin-gap-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.admin-gap-rank {
+  font-weight: 700;
+  color: #55606e;
+  font-variant-numeric: tabular-nums;
+}
+
+.admin-gap-meta {
+  margin-left: auto;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.admin-gap-q {
+  margin: 6px 0 0;
+  color: #3a4250;
+  font-style: italic;
+}
+
 /* Knowledge upload panel */
 .admin-upload {
   background: #fff;

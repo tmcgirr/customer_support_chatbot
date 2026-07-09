@@ -1,7 +1,7 @@
 import { useState } from "react";
 
 import { AdminAuthError, AdminForbiddenError } from "./api";
-import type { AdminClient, AdminRole, InsightsCluster } from "./api";
+import type { AdminClient, AdminRole, InsightsCluster, KnowledgeGap } from "./api";
 import { useAdminAction } from "./useAdminAction";
 import { useAdminQuery } from "./useAdminQuery";
 
@@ -63,6 +63,59 @@ function ClusterCard({
   );
 }
 
+function GapRow({
+  gap,
+  rank,
+  isAdmin,
+  busy,
+  approved,
+  onApprove,
+}: {
+  gap: KnowledgeGap;
+  rank: number;
+  isAdmin: boolean;
+  busy: boolean;
+  approved: boolean;
+  onApprove: (intent: string) => void;
+}) {
+  const draftIntent = gap.proposed_canonical_intent;
+  return (
+    <li className="admin-card admin-gap">
+      <div className="admin-gap-head">
+        <span className="admin-gap-rank">#{rank}</span>
+        <span className={coverageClass(gap.coverage)}>{gap.coverage}</span>
+        <strong>{gap.label}</strong>
+        <span className="admin-muted admin-gap-meta">
+          asked {gap.total_asked}× · seen {gap.days_seen} day{gap.days_seen === 1 ? "" : "s"}
+        </span>
+      </div>
+      <p className="admin-gap-q">“{gap.representative_question}”</p>
+      {gap.proposed_question && (
+        <div className="admin-proposed">
+          <p>
+            <strong>Proposed FAQ:</strong> {gap.proposed_question}
+          </p>
+          {gap.proposed_answer && <p className="admin-content">{gap.proposed_answer}</p>}
+          {isAdmin &&
+            draftIntent &&
+            (approved ? (
+              <p className="admin-muted">Approved ✓ — now served.</p>
+            ) : (
+              <button
+                type="button"
+                className="admin-link"
+                disabled={busy}
+                onClick={() => onApprove(draftIntent)}
+              >
+                Approve FAQ
+              </button>
+            ))}
+        </div>
+      )}
+    </li>
+  );
+}
+
 export default function Insights({
   client,
   role,
@@ -80,6 +133,8 @@ export default function Insights({
   const { error: actionError, busy, run } = useAdminAction(onAuthError);
 
   const { data: listData } = useAdminQuery(() => client.listInsightsReports(), onAuthError, []);
+  const { data: gapsData } = useAdminQuery(() => client.getKnowledgeGaps(14), onAuthError, []);
+  const gaps = gapsData?.gaps ?? [];
   const { data: reportData, loading, error } = useAdminQuery(
     () =>
       selectedId
@@ -141,6 +196,38 @@ export default function Insights({
 
       {runMsg && <p className="admin-muted">{runMsg}</p>}
       {actionError && <p className="admin-error">{actionError}</p>}
+
+      {gapsData && (
+        <section className="admin-gaps">
+          <h3>Top knowledge gaps · last {gapsData.window_days} days</h3>
+          {gaps.length === 0 ? (
+            <p className="admin-muted">
+              {gapsData.daily_reports === 0
+                ? "No daily reports yet — gaps appear once the daily insights run has data."
+                : "No uncovered question themes in this window 🎉"}
+            </p>
+          ) : (
+            <ol className="admin-gap-list">
+              {gaps.map((g, i) => (
+                <GapRow
+                  key={g.key}
+                  gap={g}
+                  rank={i + 1}
+                  isAdmin={isAdmin}
+                  busy={busy}
+                  approved={
+                    g.proposed_canonical_intent
+                      ? approvedIntents.has(g.proposed_canonical_intent)
+                      : false
+                  }
+                  onApprove={handleApprove}
+                />
+              ))}
+            </ol>
+          )}
+        </section>
+      )}
+
       {loading && <p className="admin-muted">Loading insights…</p>}
       {error && <p className="admin-error">{error}</p>}
       {!loading && report === null && (

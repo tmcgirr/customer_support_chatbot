@@ -92,6 +92,100 @@ async def test_latest_orders_by_generated_at_not_id(
     assert resp.json()["report"]["period_type"] == "daily"  # the newer one, not weekly
 
 
+async def test_report_view_masks_verbatim_question_text(
+    client: httpx.AsyncClient, insights_collection: Collection
+) -> None:
+    # representative_question / sample_questions are verbatim visitor text → masked in the
+    # admin view like every other free-text field; reveal stays the audited per-record path.
+    doc = _report_doc()
+    doc["clusters"][0]["representative_question"] = "email me at jane@acme.com about pricing"
+    doc["clusters"][0]["sample_questions"] = ["reach me at jane@acme.com"]
+    # label can fall back to the raw representative question (analyze-LLM timeout) → must mask.
+    doc["clusters"][0]["label"] = "email me at jane@acme.com about pricing"
+    # proposed_question can also fall back to the raw question (service.py `_propose`).
+    doc["clusters"][0]["proposed"]["question"] = "reply to jane@acme.com with pricing"
+    await insights_collection.insert_one(doc)
+
+    body = (await client.get("/api/v1/admin/insights", auth=ADMIN_AUTH)).json()["report"]
+    cluster = body["clusters"][0]
+    assert "jane@acme.com" not in cluster["representative_question"]
+    assert "jane@acme.com" not in cluster["sample_questions"][0]
+    assert "jane@acme.com" not in cluster["label"]
+    assert "jane@acme.com" not in cluster["proposed_question"]
+
+
+async def test_knowledge_gaps_ranking(
+    client: httpx.AsyncClient, insights_collection: Collection
+) -> None:
+    def _daily(day: int, topic: str, size: int, coverage: str = "missing") -> dict:
+        d = datetime(2026, 7, day, tzinfo=UTC)
+        return {
+            "_id": f"daily:2026-07-{day:02d}",
+            "period_type": "daily",
+            "period_key": f"2026-07-{day:02d}",
+            "generated_at": d,
+            "window_start": d,
+            "window_end": d,
+            "conversations_analyzed": 10,
+            "conversations_in_period": 10,
+            "clusters": [
+                {
+                    "label": topic,
+                    "representative_question": f"a {topic} question",
+                    "sample_questions": [f"a {topic} question"],
+                    "size": size,
+                    "dominant_topic": topic,
+                    "coverage": coverage,
+                    "conversation_ids": ["cnv_1"],
+                    "proposed": None,
+                }
+            ],
+            "summary": "s",
+        }
+
+    # pricing: 4 asks over 2 days · security: 5 asks over 1 day · covered onboarding: excluded
+    await insights_collection.insert_many(
+        [
+            _daily(6, "onboarding", 9, coverage="covered"),
+            _daily(7, "pricing", 2),
+            _daily(8, "pricing", 2),
+            _daily(9, "security", 5),
+        ]
+    )
+
+    resp = await client.get("/api/v1/admin/insights/gaps", auth=VIEWER_AUTH)  # read: either role
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["daily_reports"] == 4  # covered onboarding is still a report that was scanned
+    keys = [g["key"] for g in body["gaps"]]
+    assert keys == ["topic:security", "topic:pricing"]  # magnitude 5 > 4
+    pricing = next(g for g in body["gaps"] if g["key"] == "topic:pricing")
+    assert pricing["total_asked"] == 4 and pricing["days_seen"] == 2
+    assert all(g["coverage"] != "covered" for g in body["gaps"])
+
+
+async def test_knowledge_gaps_masks_question_text(
+    client: httpx.AsyncClient, insights_collection: Collection
+) -> None:
+    doc = _report_doc()
+    # No dominant_topic → the merge key becomes "label:<label>", and the label itself falls
+    # back to the raw question on an analyze-LLM timeout — so key, label AND the question
+    # can each carry the email. All three must be masked.
+    doc["clusters"][0]["dominant_topic"] = None
+    doc["clusters"][0]["label"] = "contact bob@corp.com re the new model"
+    doc["clusters"][0]["representative_question"] = "contact bob@corp.com re the new model"
+    doc["clusters"][0]["proposed"]["question"] = "email bob@corp.com about the new model"
+    await insights_collection.insert_one(doc)
+
+    body = (await client.get("/api/v1/admin/insights/gaps", auth=ADMIN_AUTH)).json()
+    assert body["gaps"], "expected the missing-coverage cluster to surface as a gap"
+    gap = body["gaps"][0]
+    assert "bob@corp.com" not in gap["representative_question"]
+    assert "bob@corp.com" not in gap["label"]
+    assert "bob@corp.com" not in gap["key"]
+    assert "bob@corp.com" not in gap["proposed_question"]
+
+
 async def test_run_now_dedups_a_pending_refresh(
     client: httpx.AsyncClient, jobs_collection: Collection
 ) -> None:

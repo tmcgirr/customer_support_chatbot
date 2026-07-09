@@ -213,6 +213,27 @@ export interface InsightsReportItem {
   cluster_count: number;
 }
 
+/** A ranked knowledge gap: a non-covered question theme aggregated across recent daily reports. */
+export interface KnowledgeGap {
+  key: string;
+  label: string;
+  representative_question: string; // masked at the API edge
+  coverage: "covered" | "unclear" | "missing" | string;
+  total_asked: number; // magnitude
+  days_seen: number; // persistence (distinct daily reports)
+  proposed_question: string | null;
+  proposed_answer: string | null;
+  proposed_canonical_intent: string | null;
+  last_period_key: string;
+  last_generated_at: string;
+}
+
+export interface KnowledgeGapsResult {
+  window_days: number;
+  daily_reports: number;
+  gaps: KnowledgeGap[];
+}
+
 export interface AuditEntry {
   actor: string;
   role: string;
@@ -307,6 +328,7 @@ export interface AdminClient {
   listInsightsReports(): Promise<{ reports: InsightsReportItem[] }>;
   getInsightsReport(reportId: string): Promise<InsightsReport>;
   runInsights(): Promise<ActionResult>; // admin-only; enqueues a background run
+  getKnowledgeGaps(windowDays?: number): Promise<KnowledgeGapsResult>;
 }
 
 function basicHeader(creds: AdminCreds): string {
@@ -444,5 +466,7 @@ export function createAdminClient(creds: AdminCreds): AdminClient {
     getInsightsReport: (reportId: string) =>
       request<InsightsReport>(`/insights/reports/${encodeURIComponent(reportId)}`),
     runInsights: () => request<ActionResult>("/insights/run", { method: "POST" }),
+    getKnowledgeGaps: (windowDays = 14) =>
+      request<KnowledgeGapsResult>(`/insights/gaps?window=${windowDays}`),
   };
 }

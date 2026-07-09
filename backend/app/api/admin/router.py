@@ -28,6 +28,7 @@ from app.core.config import get_settings
 from app.core.errors import AppError, ErrorCode
 from app.core.logging import get_logger
 from app.core.masking import mask_email, mask_pii_in_text
+from app.domain.insights.gaps import rank_gaps
 from app.domain.insights.models import InsightsReport
 from app.domain.knowledge.models import KnowledgeSource
 from app.domain.knowledge.store import KnowledgeStore, KnowledgeStoreError
@@ -228,6 +229,26 @@ class InsightsReportItem(BaseModel):
 
 class InsightsListResponse(BaseModel):
     reports: list[InsightsReportItem]
+
+
+class KnowledgeGapItem(BaseModel):
+    key: str
+    label: str
+    representative_question: str  # masked (contracts §10) — question text is PII by default
+    coverage: str
+    total_asked: int  # magnitude: questions asked across the window
+    days_seen: int  # persistence: distinct daily reports it appeared in
+    proposed_question: str | None
+    proposed_answer: str | None
+    proposed_canonical_intent: str | None  # approve via the existing gate; never a provider id
+    last_period_key: str
+    last_generated_at: datetime
+
+
+class KnowledgeGapsResponse(BaseModel):
+    window_days: int
+    daily_reports: int  # daily reports aggregated (0 ⇒ none yet, so no gaps to rank)
+    gaps: list[KnowledgeGapItem]
 
 
 class PrivacySummary(BaseModel):
@@ -915,14 +936,19 @@ def _to_report_response(report: InsightsReport) -> InsightsReportResponse:
         summary=report.summary,
         clusters=[
             InsightsCluster(
-                label=c.label,
-                representative_question=c.representative_question,
-                sample_questions=c.sample_questions,
+                # Cluster questions are verbatim visitor text → mask by default like every
+                # other admin free-text (unresolved questions, summaries). Reveal stays the
+                # audited per-record path (contracts §10, invariant #12). `label` is masked
+                # too: it falls back to the raw representative question when the analyze LLM
+                # call times out / returns no label (service.py `_analyze`/`_parse_analysis`).
+                label=mask_pii_in_text(c.label),
+                representative_question=mask_pii_in_text(c.representative_question),
+                sample_questions=[mask_pii_in_text(q) for q in c.sample_questions],
                 size=c.size,
                 dominant_topic=c.dominant_topic,
                 coverage=c.coverage,
                 conversation_ids=c.conversation_ids,
-                proposed_question=c.proposed.question if c.proposed else None,
+                proposed_question=(mask_pii_in_text(c.proposed.question) if c.proposed else None),
                 proposed_answer=c.proposed.answer if c.proposed else None,
                 proposed_canonical_intent=(
                     c.proposed.canonical_draft_intent if c.proposed else None
@@ -957,6 +983,45 @@ async def list_insights(_admin: AdminDep, insights: InsightsRepoDep) -> Insights
             )
             for r in await insights.list_recent()
         ]
+    )
+
+
+@router.get("/insights/gaps", response_model=KnowledgeGapsResponse)
+async def insights_gaps(
+    _admin: AdminDep,
+    insights: InsightsRepoDep,
+    window: Annotated[int, Query(ge=1, le=90)] = 14,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> KnowledgeGapsResponse:
+    """Ranked knowledge gaps: the non-covered question themes aggregated across the last
+    ``window`` DAILY reports, biggest / most-persistent first. A read-side view over stored
+    reports — no model calls. Question text is masked (contracts §10); reveal stays the
+    audited per-record path. Daily only, so overlapping weekly/monthly can't double-count."""
+    reports = await insights.list_recent(limit=window, period_type="daily")
+    gaps = rank_gaps(reports, limit=limit)
+    return KnowledgeGapsResponse(
+        window_days=window,
+        daily_reports=len(reports),
+        gaps=[
+            KnowledgeGapItem(
+                # `key`/`label` can embed the raw representative question (the analyze-LLM
+                # fallback — see `_to_report_response`), so mask them like the question fields.
+                key=mask_pii_in_text(g.key),
+                label=mask_pii_in_text(g.label),
+                representative_question=mask_pii_in_text(g.representative_question),
+                coverage=g.coverage,
+                total_asked=g.total_asked,
+                days_seen=g.days_seen,
+                proposed_question=(
+                    mask_pii_in_text(g.proposed_question) if g.proposed_question else None
+                ),
+                proposed_answer=g.proposed_answer,
+                proposed_canonical_intent=g.canonical_draft_intent,
+                last_period_key=g.last_period_key,
+                last_generated_at=g.last_generated_at,
+            )
+            for g in gaps
+        ],
     )
 
 

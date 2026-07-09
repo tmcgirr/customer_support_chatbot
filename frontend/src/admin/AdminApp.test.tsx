@@ -29,6 +29,7 @@ const getLatestInsights = vi.fn();
 const listInsightsReports = vi.fn();
 const getInsightsReport = vi.fn();
 const runInsights = vi.fn();
+const getKnowledgeGaps = vi.fn();
 const getFunnel = vi.fn();
 
 vi.mock("./api", () => ({
@@ -56,6 +57,7 @@ vi.mock("./api", () => ({
     listInsightsReports,
     getInsightsReport,
     runInsights,
+    getKnowledgeGaps,
     getFunnel,
   }),
   AdminAuthError: class AdminAuthError extends Error {},
@@ -186,6 +188,25 @@ beforeEach(() => {
   });
   getInsightsReport.mockResolvedValue(INSIGHTS_REPORT);
   runInsights.mockResolvedValue({ ok: true, detail: "queued" });
+  getKnowledgeGaps.mockResolvedValue({
+    window_days: 14,
+    daily_reports: 3,
+    gaps: [
+      {
+        key: "topic:pricing",
+        label: "Pricing detail",
+        representative_question: "how much for a strategy engagement",
+        coverage: "unclear",
+        total_asked: 7,
+        days_seen: 3,
+        proposed_question: null,
+        proposed_answer: null,
+        proposed_canonical_intent: null,
+        last_period_key: "2026-07-08",
+        last_generated_at: "2026-07-09T00:05:00Z",
+      },
+    ],
+  });
   getFunnel.mockResolvedValue({
     overall: { visited: 50, asked: 40, engaged: 25, requested: 8 },
     by_topic: { pricing: { visited: 20, asked: 18, engaged: 12, requested: 5 } },
@@ -379,6 +400,11 @@ describe("AdminApp", () => {
     expect(screen.getByText("New model support")).toBeInTheDocument();
     expect(screen.getByText("missing")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Run now" })).toBeInTheDocument();
+
+    // The cross-report knowledge-gap ranking renders above the per-report clusters.
+    expect(screen.getByText(/Top knowledge gaps/)).toBeInTheDocument();
+    expect(screen.getByText("Pricing detail")).toBeInTheDocument();
+    expect(screen.getByText(/asked 7×/)).toBeInTheDocument();
 
     // Approve FAQ approves the auto-drafted canonical via the existing gate.
     fireEvent.click(screen.getByRole("button", { name: "Approve FAQ" }));

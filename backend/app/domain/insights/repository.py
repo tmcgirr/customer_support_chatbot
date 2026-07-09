@@ -35,9 +35,15 @@ class InsightsReportRepository:
         docs = await self._collection.find().sort("generated_at", -1).limit(1).to_list(length=1)
         return InsightsReport.model_validate(docs[0]) if docs else None
 
-    async def list_recent(self, limit: int = 30) -> list[InsightsReport]:
+    async def list_recent(
+        self, limit: int = 30, *, period_type: str | None = None
+    ) -> list[InsightsReport]:
+        """Recent reports newest-first. ``period_type`` restricts to one horizon (the
+        knowledge-gap ranking asks for ``daily`` only, so overlapping weekly/monthly
+        snapshots can't double-count)."""
+        query: dict[str, Any] = {} if period_type is None else {"period_type": period_type}
         docs = (
-            await self._collection.find()
+            await self._collection.find(query)
             .sort("generated_at", -1)
             .limit(limit)
             .to_list(length=limit)
