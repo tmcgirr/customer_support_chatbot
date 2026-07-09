@@ -12,11 +12,9 @@ from app.core.security import mint_session_token
 
 router = APIRouter(prefix="/api/v1/conversations", tags=["conversations"])
 
-WELCOME_TEXT = (
-    "Hi, I'm Cadre AI's virtual assistant. I can help you learn about Cadre's services, "
-    "explore whether we work with your industry, access client support, or connect with an "
-    "AI strategist."
-)
+# Kept short on purpose: the suggested actions below carry the "what you can ask"
+# detail, so the greeting stays a single welcoming line (docs/05 §opening).
+WELCOME_TEXT = "Hi, I'm Cadre AI's virtual assistant. How can I help?"
 SUGGESTED_ACTIONS = [
     {"id": "company_overview", "label": "What does Cadre AI do?"},
     {"id": "industry_fit", "label": "Do you work with my industry?"},

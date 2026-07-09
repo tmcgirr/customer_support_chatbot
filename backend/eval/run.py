@@ -23,7 +23,7 @@ import asyncio
 import json
 import sys
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -190,10 +190,12 @@ async def run_config(
     return RunResult(config=config, generated_at=datetime.now(UTC), cases=results)
 
 
-def _write_output(path_str: str, content: str | bytes) -> str:
-    """Write an output artifact (text or bytes), creating parent dirs. Returns a status line;
-    an I/O error is reported (not raised) so it can never flip the gate's exit code."""
+def _write_output(path_str: str, produce: Callable[[], str | bytes]) -> str:
+    """RENDER (via ``produce``) and write an output artifact, creating parent dirs. Both the
+    render and the write run under one guard — any failure is reported (not raised), so an
+    artifact problem can NEVER flip the gate's exit code (the gate reflects the eval, not I/O)."""
     try:
+        content = produce()
         path = Path(path_str)
         path.parent.mkdir(parents=True, exist_ok=True)
         if isinstance(content, bytes):
@@ -201,8 +203,8 @@ def _write_output(path_str: str, content: str | bytes) -> str:
         else:
             path.write_text(content, encoding="utf-8")
         return f"wrote {path_str}"
-    except OSError as exc:
-        return f"WARNING: could not write {path_str}: {exc}"
+    except Exception as exc:
+        return f"WARNING: could not write {path_str}: {type(exc).__name__}: {exc}"
 
 
 def _load_cases(id_filter: str) -> list[dict[str, Any]]:
@@ -273,14 +275,19 @@ async def main(
     # Writing an output artifact must NEVER change the gate's exit code — the gate reflects
     # the eval result, not I/O. A bad path warns (and makes the parent dir) but doesn't crash.
     if json_out:
-        payload = json.dumps({"runs": [r.as_dict() for r in runs]}, indent=2)
-        print(await asyncio.to_thread(_write_output, json_out, payload))
+        print(
+            await asyncio.to_thread(
+                _write_output,
+                json_out,
+                lambda: json.dumps({"runs": [r.as_dict() for r in runs]}, indent=2),
+            )
+        )
     if report:
-        print(await asyncio.to_thread(_write_output, report, render_html(runs)))
+        print(await asyncio.to_thread(_write_output, report, lambda: render_html(runs)))
     if pdf_out:
         from eval.pdf import render_pdf
 
-        print(await asyncio.to_thread(_write_output, pdf_out, render_pdf(runs)))
+        print(await asyncio.to_thread(_write_output, pdf_out, lambda: render_pdf(runs)))
 
     if gated and any(not c.passed for r in runs for c in r.cases):
         return 1

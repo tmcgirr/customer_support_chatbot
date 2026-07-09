@@ -45,3 +45,11 @@ def test_pdf_survives_unicode_in_output() -> None:
 
 def test_empty_pdf_is_valid() -> None:
     assert render_pdf([])[:5] == b"%PDF-"
+
+
+def test_pdf_survives_a_page_length_failure() -> None:
+    # A crashed case can store a very long error string; a single table cell taller than a
+    # page makes fpdf2 raise. The cell text must be clipped so the report still renders.
+    huge = "error: APIError: " + ("x " * 5000)
+    run = _run("x", [CaseResult(id="c1", passed=False, failures=[huge], routed_intent="y" * 5000)])
+    assert render_pdf([run])[:5] == b"%PDF-"

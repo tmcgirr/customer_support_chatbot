@@ -2,31 +2,32 @@
  *
  * The widget renders inside a TRANSPARENT iframe; only the launcher and the panel
  * are visible, so the page background must stay transparent to let the host show
- * through. V2 look: dark "slate" theme — deep slate surfaces, light text, a single
- * indigo accent, generous spacing. Sleek and calm; system fonts throughout. */
+ * through. Look: neutral dark-gray theme (ChatGPT-style) — near-neutral gray
+ * surfaces, off-white text, a single indigo send/focus accent. Calm, roomy;
+ * system fonts throughout. */
 
 :root {
   /* Typography */
   --cadre-font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 
-  /* Brand accent — indigo, tuned to read on dark slate */
+  /* Brand accent — indigo, used sparingly (send button + focus ring) */
   --cadre-accent: #6366f1;
   --cadre-accent-hover: #7c83f7;
   --cadre-accent-contrast: #ffffff;
 
-  /* Slate surfaces (dark). --cadre-surface kept as an alias for the panel base. */
-  --cadre-panel: #0f172a; /* slate-900 — panel body */
-  --cadre-surface: #0f172a;
-  --cadre-elevated: #16223c; /* header / hover wash */
-  --cadre-input: #1e293b; /* slate-800 — composer + fields */
-  --cadre-user-bubble: #2b3a55; /* user message bubble */
+  /* Neutral dark-gray surfaces. --cadre-surface aliases the panel base. */
+  --cadre-panel: #212121; /* panel body */
+  --cadre-surface: #212121;
+  --cadre-elevated: #2a2a2a; /* header / hover wash */
+  --cadre-input: #2f2f2f; /* composer + fields */
+  --cadre-user-bubble: #303030; /* user message bubble */
 
   /* Lines & text */
-  --cadre-border: #24304a; /* subtle dividers */
-  --cadre-border-strong: #35415c; /* input / chip outlines */
-  --cadre-text: #e6edf6;
-  --cadre-text-muted: #94a3b8;
-  --cadre-text-subtle: #64748b;
+  --cadre-border: #333333; /* subtle dividers */
+  --cadre-border-strong: #4d4d4f; /* input / chip outlines */
+  --cadre-text: #ececec;
+  --cadre-text-muted: #b4b4b4;
+  --cadre-text-subtle: #8e8e8e;
   --cadre-danger: #f87171;
   --cadre-danger-bg: rgba(248, 113, 113, 0.12);
   --cadre-danger-border: rgba(248, 113, 113, 0.35);
@@ -36,7 +37,7 @@
   --cadre-radius-md: 16px;
   --cadre-radius-lg: 22px;
   --cadre-radius-pill: 999px;
-  --cadre-shadow: 0 20px 55px -14px rgba(2, 6, 23, 0.7);
+  --cadre-shadow: 0 20px 55px -14px rgba(0, 0, 0, 0.6);
   --cadre-focus-ring: 0 0 0 3px rgba(99, 102, 241, 0.45);
 
   color: var(--cadre-text);
@@ -97,8 +98,8 @@ body {
   padding: 0;
   border: 1px solid var(--cadre-border-strong);
   border-radius: 50%;
-  background: radial-gradient(circle at 30% 25%, #1e2a44 0%, #0f172a 70%);
-  color: #eef2ff;
+  background: radial-gradient(circle at 30% 25%, #343434 0%, #171717 70%);
+  color: #ececec;
   box-shadow: var(--cadre-shadow);
   cursor: pointer;
   transition:
@@ -192,9 +193,9 @@ body {
   height: 32px;
   flex: 0 0 auto;
   border-radius: 50%;
-  color: #ffffff;
-  background: linear-gradient(140deg, #6366f1 0%, #4338ca 100%);
-  box-shadow: 0 2px 8px rgba(67, 56, 202, 0.45);
+  color: #ececec;
+  background: linear-gradient(140deg, #3f3f3f 0%, #262626 100%);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
 }
 
 /* Small "online" presence dot on the avatar (decorative). */
@@ -562,7 +563,9 @@ body {
   line-height: 1.5;
   resize: none;
   padding: 8px 0;
-  max-height: 120px;
+  /* Height + overflow are managed in Composer.tsx (auto-grow to MAX_ROWS lines).
+     Default to hidden so there's no scrollbar flicker before the first measure. */
+  overflow-y: hidden;
 }
 
 .cadre-composer-input::placeholder {

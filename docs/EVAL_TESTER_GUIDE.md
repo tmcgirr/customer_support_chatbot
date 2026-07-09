@@ -42,7 +42,7 @@ it ships — not a mock.
 
 **Categories** are the id prefix, so the report groups by topic — e.g. `prc` pricing, `sec`
 security/compliance, `sla` timelines, `prt` portal, `ind` industry, `inj` prompt-injection /
-jailbreak, `uns` unsupported, `idn` identity, `cmp` competitor, `llm` model selection.
+jailbreak, `uns` unsupported, `idn` identity, `cmp` company overview, `llm` model selection.
 
 ---
 

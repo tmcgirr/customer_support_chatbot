@@ -22,6 +22,13 @@ def _safe(text: object) -> str:
     return str(text).encode("latin-1", "replace").decode("latin-1")
 
 
+def _clip(text: str, limit: int) -> str:
+    """Bound a cell's text — a single cell taller than one A4 page makes fpdf2 raise. Model
+    output / long error strings go in a table cell, so cap them (the full text is in the
+    HTML + JSON reports)."""
+    return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
 def _heading(pdf: FPDF, text: str) -> None:
     pdf.set_font("Helvetica", "B", 12)
     pdf.set_text_color(0, 0, 0)
@@ -41,9 +48,9 @@ def _ranking(pdf: FPDF, runs: list[RunResult]) -> None:
             table.row(
                 [
                     str(i),
-                    _safe(r.config.name),
-                    _safe(r.config.model),
-                    _safe(r.config.prompt_version),
+                    _safe(_clip(r.config.name, 40)),
+                    _safe(_clip(r.config.model, 40)),
+                    _safe(_clip(r.config.prompt_version, 30)),
                     f"{round(r.score * 100)}%",
                     f"{r.passed}/{r.total}",
                     str(r.avg_latency_ms),
@@ -75,14 +82,14 @@ def _run_section(pdf: FPDF, run: RunResult) -> None:
         table.row(["Case", "Status", "Routed intent", "ms", "Failures"])
         for case in run.cases:
             row = table.row()
-            row.cell(_safe(case.id))
+            row.cell(_safe(_clip(case.id, 40)))
             row.cell(
                 "PASS" if case.passed else "FAIL",
                 style=FontFace(color=_GREEN if case.passed else _RED, emphasis="BOLD"),
             )
-            row.cell(_safe(case.routed_intent or "-"))
+            row.cell(_safe(_clip(case.routed_intent or "-", 60)))
             row.cell(str(case.latency_ms))
-            row.cell(_safe("; ".join(case.failures) or "-"))
+            row.cell(_safe(_clip("; ".join(case.failures) or "-", 300)))
     pdf.ln(4)
 
 

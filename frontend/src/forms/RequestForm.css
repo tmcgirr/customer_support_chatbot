@@ -1,16 +1,33 @@
+/* Request form — rendered inside the widget panel, so it uses the shared dark
+   "slate" tokens from index.css (see :root there). */
+
 .rf-root {
-  max-width: 32rem;
-  padding: 1rem 1.25rem 1.25rem;
-  color: #1a1a2e;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 1.15rem 1.25rem 1.35rem;
+  color: var(--cadre-text);
+  scrollbar-width: thin;
+  scrollbar-color: var(--cadre-border-strong) transparent;
+}
+
+.rf-root::-webkit-scrollbar {
+  width: 8px;
+}
+
+.rf-root::-webkit-scrollbar-thumb {
+  background: var(--cadre-border-strong);
+  border-radius: 999px;
 }
 
 .rf-title {
   font-size: 1.15rem;
   margin: 0 0 0.75rem;
+  color: var(--cadre-text);
 }
 
 .rf-help {
-  color: #444;
+  color: var(--cadre-text-muted);
   line-height: 1.5;
   margin: 0 0 1rem;
 }
@@ -18,15 +35,16 @@
 .rf-subhead {
   font-weight: 600;
   margin: 1rem 0 0.25rem;
+  color: var(--cadre-text);
 }
 
 .rf-warning {
-  background: #fff4e5;
-  border: 1px solid #ffb74d;
-  border-radius: 8px;
+  background: rgba(251, 191, 36, 0.1);
+  border: 1px solid rgba(251, 191, 36, 0.4);
+  border-radius: var(--cadre-radius-sm);
   padding: 0.6rem 0.75rem;
   margin: 0 0 1rem;
-  color: #7a4b00;
+  color: #fcd34d;
 }
 
 .rf-form,
@@ -46,11 +64,12 @@
 .rf-field label {
   font-weight: 600;
   font-size: 0.9rem;
+  color: var(--cadre-text);
 }
 
 .rf-optional {
   font-weight: 400;
-  color: #777;
+  color: var(--cadre-text-subtle);
 }
 
 .rf-field input[type="text"],
@@ -58,11 +77,24 @@
 .rf-field textarea,
 .rf-field select {
   font: inherit;
-  padding: 0.5rem 0.6rem;
-  border: 1px solid #c7cad8;
-  border-radius: 6px;
-  background: #fff;
-  color: inherit;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--cadre-border-strong);
+  border-radius: var(--cadre-radius-sm);
+  background: var(--cadre-input);
+  color: var(--cadre-text);
+}
+
+.rf-field input::placeholder,
+.rf-field textarea::placeholder {
+  color: var(--cadre-text-subtle);
+}
+
+.rf-field input:focus-visible,
+.rf-field textarea:focus-visible,
+.rf-field select:focus-visible {
+  outline: none;
+  border-color: var(--cadre-accent);
+  box-shadow: var(--cadre-focus-ring);
 }
 
 .rf-field textarea {
@@ -71,11 +103,11 @@
 
 .rf-field input[aria-invalid="true"],
 .rf-field textarea[aria-invalid="true"] {
-  border-color: #b00020;
+  border-color: var(--cadre-danger);
 }
 
 .rf-error {
-  color: #b00020;
+  color: var(--cadre-danger);
   font-size: 0.85rem;
 }
 
@@ -90,11 +122,13 @@
 }
 
 .rf-consent-statement {
-  background: #f2f3f9;
-  border-radius: 8px;
+  background: var(--cadre-elevated);
+  border: 1px solid var(--cadre-border);
+  border-radius: var(--cadre-radius-sm);
   padding: 0.6rem 0.75rem;
   line-height: 1.5;
   margin: 0;
+  color: var(--cadre-text-muted);
 }
 
 .rf-summary {
@@ -112,7 +146,7 @@
 
 .rf-summary-row dt {
   font-size: 0.8rem;
-  color: #666;
+  color: var(--cadre-text-subtle);
   text-transform: uppercase;
   letter-spacing: 0.02em;
 }
@@ -133,50 +167,61 @@
 
 .rf-btn {
   font: inherit;
-  padding: 0.5rem 0.9rem;
-  border-radius: 6px;
+  padding: 0.5rem 0.95rem;
+  border-radius: var(--cadre-radius-pill);
   border: 1px solid transparent;
   cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease;
 }
 
 .rf-btn:disabled {
-  opacity: 0.6;
+  opacity: 0.55;
   cursor: default;
 }
 
 .rf-btn-primary {
-  background: #3a36e0;
-  color: #fff;
+  background: var(--cadre-accent);
+  color: var(--cadre-accent-contrast);
+}
+
+.rf-btn-primary:hover:not(:disabled) {
+  background: var(--cadre-accent-hover);
 }
 
 .rf-btn-ghost {
-  background: #fff;
-  border-color: #c7cad8;
-  color: #1a1a2e;
+  background: transparent;
+  border-color: var(--cadre-border-strong);
+  color: var(--cadre-text);
+}
+
+.rf-btn-ghost:hover:not(:disabled) {
+  background: var(--cadre-elevated);
 }
 
 /* Visible keyboard focus for every interactive element. */
 .rf-root :focus-visible {
-  outline: 3px solid #3a36e0;
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: var(--cadre-focus-ring);
 }
 
 .rf-success {
-  color: #1b5e20;
+  color: #34d399;
   font-weight: 600;
   margin: 0;
 }
 
 .rf-notice {
-  color: #7a4b00;
+  color: #fcd34d;
   margin: 0;
 }
 
 .rf-error-banner {
-  color: #b00020;
-  background: #fdecef;
-  border: 1px solid #f4a9b6;
-  border-radius: 8px;
+  color: #fca5a5;
+  background: var(--cadre-danger-bg);
+  border: 1px solid var(--cadre-danger-border);
+  border-radius: var(--cadre-radius-sm);
   padding: 0.6rem 0.75rem;
   margin: 0;
   line-height: 1.5;
