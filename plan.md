@@ -258,3 +258,42 @@ knowledge-gap ranking, evaluation console + **golden-run result history** + data
 E05 wording; AI Maturity mini-assessment, funnel analytics. V2+: authenticated clients, tenancy/roles, tenant-scoped
 retention, private Vector Stores, client tools with per-call authz, human takeover
 (WebSockets), regional controls. See `docs/02_Release_Capability_Plan.md` §5–6.
+
+---
+
+## V1.5 — Conversation Insights (clustering + gap analysis + proposed FAQs)
+
+Goal: turn ended conversations into an operator-facing **insights report** — *what are people
+asking, do we cover it, and what should we add?* Scheduled daily + manual kickoff. Builds ON the
+labeling slice (labels/transcripts/`adapter.classify`/worker/canonical draft→approved gate).
+
+**Decisions (owner: Trevor, 2026-07-09):** clustering = **hybrid** (embeddings pre-group → LLM
+name/analyze/propose); uncovered high-volume clusters **auto-draft a canonical answer** (status
+`draft`, never served) into the **existing approve gate** — no auto-publish. Embeddings are an
+**ephemeral compute input** (cluster in memory, persist only results; no vectors in Mongo).
+
+Slice A — Foundations ⬜
+1. `app/domain/insights/`: models (`QuestionCluster`, `InsightsReport`, `Coverage`), repository
+   (`insights_reports` dated snapshots, like `daily_aggregates`).
+2. `cluster.py`: pure-function cosine/agglomerative grouping over embeddings (threshold + min size).
+3. `adapter.embed()` (provider-isolated OpenAI embeddings) + Protocol + FakeAdapter deterministic stub.
+4. Config: cadence, window, batch cap, embed model, similarity threshold, min cluster size, time budget.
+✅ CHECKPOINT A — ruff/mypy/pytest green; cluster unit tests group deterministic vectors correctly.
+
+Slice B — Pipeline + job + manual kickoff ⬜
+1. `run_generate_insights`: window of ended+labeled convos → extract representative question →
+   embed → cluster → per cluster {name, coverage vs canonical+KB, demand count, proposed draft} →
+   LLM insights summary → store dated `InsightsReport`. Wall-clock-budgeted + idempotent per date.
+2. Worker: daily `_SCHEDULE` entry + dispatch. Manual `POST /admin/insights/run` (admin, audited).
+3. Auto-draft: uncovered high-volume cluster → canonical **draft** (reuse canonical upsert) linked to
+   the cluster; served only after the existing admin Approve.
+4. Failure-path + idempotency tests.
+✅ CHECKPOINT B — job produces a report on staging; a proposed FAQ lands in the canonical draft queue.
+
+Slice C — Admin Insights dashboard ⬜
+1. `GET /admin/insights` (latest + list). New admin **Insights** tab: clusters (name, count,
+   coverage, sample questions), proposed FAQs → link to Approve, and the LLM insights summary.
+2. Frontend tests.
+✅ CHECKPOINT C — the Insights tab renders clusters + summary; proposed FAQ approvable from the gate.
+
+Slice D — Adversarial review + deploy + verify ⬜ (review workflow → gate → staging → verify live).

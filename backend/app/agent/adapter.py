@@ -112,6 +112,11 @@ class ModelAdapter(Protocol):
         it. Read-only — no tools, never persisted provider-side."""
         ...
 
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        """Batch-embed texts for offline clustering (conversation insights). Returns one
+        vector per input, in order. Read-only; provider errors are normalized."""
+        ...
+
 
 # --- Helpers ------------------------------------------------------------------
 
@@ -163,6 +168,7 @@ class OpenAIResponsesAdapter:
         self._fallback_model = (
             fallback_model if fallback_model is not None else settings.openai_fallback_model
         )
+        self._embed_model = settings.insights_embed_model
 
     async def send(
         self,
@@ -280,6 +286,17 @@ class OpenAIResponsesAdapter:
             # OpenAI-typed object is retained on __cause__ (invariant #4).
             raise AdapterError() from None
         return str(getattr(response, "output_text", "") or "")
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        """Batch embeddings for offline clustering. One provider call for the whole batch;
+        errors normalized to AdapterError so no OpenAI type escapes (invariant #4)."""
+        if not texts:
+            return []
+        try:
+            response = await self._client.embeddings.create(model=self._embed_model, input=texts)
+        except Exception:
+            raise AdapterError() from None
+        return [list(item.embedding) for item in response.data]
 
     async def aclose(self) -> None:
         await self._client.close()

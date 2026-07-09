@@ -130,6 +130,19 @@ class Settings(BaseSettings):
     # bounded by the per-endpoint read cap; document a proxy body cap for defense.
     max_request_body_bytes: int = 10 * 1024 * 1024
 
+    # --- Conversation Insights (V1.5): clustering + gap analysis + proposed FAQs ---
+    insights_embed_model: str = "text-embedding-3-small"
+    # Cosine similarity at/above which two questions are the "same" (connected into one
+    # cluster). Higher = stricter (only near-identical group).
+    insights_similarity_threshold: float = 0.82
+    # A cluster this size is "common" enough to surface + propose a unified FAQ for.
+    insights_min_cluster_size: int = 3
+    insights_window_days: int = 7  # look-back window a report covers
+    insights_batch_limit: int = 300  # max conversations analyzed per run
+    # Wall-clock cap for the run's LLM steps (naming/coverage/proposal per cluster +
+    # summary) — kept under worker_job_timeout_seconds so the job can't time out.
+    insights_time_budget_seconds: float = 40.0
+
     # --- Request delivery transport (pluggable; V1.5). 'simulated' (default) is a
     # functional MOCK: it records what WOULD be sent (visible in admin), needs no creds,
     # and runs the full pipeline. Flip `delivery_transport` + drop in the matching creds

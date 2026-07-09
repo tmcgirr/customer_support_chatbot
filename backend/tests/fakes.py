@@ -44,6 +44,7 @@ class FakeAdapter:
         rounds: list[list[StreamEvent]] | None = None,
         classify_result: str | None = None,
         classify_raises: Exception | None = None,
+        embed_by_text: dict[str, list[float]] | None = None,
     ) -> None:
         self.events: list[StreamEvent] = events if events is not None else []
         self.raises = raises
@@ -54,6 +55,10 @@ class FakeAdapter:
         self._classify_result = classify_result
         self._classify_raises = classify_raises
         self.classify_calls: list[str] = []
+        # For the offline embed() path (insights clustering) — map text → vector so a
+        # test can script which questions cluster together.
+        self._embed_by_text = embed_by_text or {}
+        self.embed_calls: list[list[str]] = []
 
     @classmethod
     def replying(cls, text: str, *, usage: Usage | None = None) -> "FakeAdapter":
@@ -95,6 +100,15 @@ class FakeAdapter:
         if self._classify_raises is not None:
             raise self._classify_raises
         return self._classify_result or '{"topic": "other", "intent": "learn"}'
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        # Deterministic: a scripted vector per text, else a distinct near-orthogonal
+        # default so unmapped texts don't accidentally cluster together.
+        self.embed_calls.append(list(texts))
+        out: list[list[float]] = []
+        for i, t in enumerate(texts):
+            out.append(self._embed_by_text.get(t, [float(i + 1), 0.0, 0.0]))
+        return out
 
 
 class FakeDeliveryClient:

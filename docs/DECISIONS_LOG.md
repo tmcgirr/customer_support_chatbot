@@ -590,3 +590,25 @@ Choices made during implementation that the planning docs did not fully specify
   provider exception retained on `__cause__`).
 - **Verified:** 314 backend + 45 frontend tests (rules on real intents, model-residue via
   FakeAdapter.classify, job idempotency + time-budget break, dashboard buckets, "unset" hidden).
+
+## V1.5 — Conversation Insights: foundations (Slice A) (2026-07-09)
+
+- **Feature = clustering + gap analysis + proposed FAQs + LLM insights summary** over ended
+  conversations, scheduled daily + manual kickoff (plan.md "V1.5 — Conversation Insights").
+  Owner decisions: **hybrid** clustering (embeddings pre-group → LLM name/analyze/propose) and
+  **auto-draft** uncovered high-volume clusters into the existing canonical draft→approved gate.
+- **Embeddings are an EPHEMERAL compute input, never persisted.** We batch-embed the run's
+  questions, cluster in memory (`insights/cluster.py`, pure cosine/connected-components), and
+  store only RESULTS (clusters, coverage, proposed drafts, summary) in `insights_reports`. So the
+  "Mongo is a plain doc store / the only vector index is the OpenAI Vector Store" boundary holds —
+  no vector storage or vector search is added to Mongo.
+- **Cost scales with cluster count, not conversation count:** question extraction is heuristic
+  (first substantive user message / verbatim unsupported question — no per-conversation model
+  call); embeddings are ONE batched call; the LLM runs per-cluster (naming/coverage/proposal) +
+  one summary. So a daily run over ~hundreds of conversations is a batched embed + a few dozen
+  small LLM calls, bounded by a wall-clock budget under the worker job timeout.
+- **Slice A shipped (dormant foundation, no behavior change):** `insights/` models + repository
+  (dated `insights_reports`), `cluster.py` (+ unit tests), provider-isolated `adapter.embed`
+  (batched, errors normalized, `from None`), `FakeAdapter.embed`, and config
+  (`insights_*`: embed model, similarity threshold 0.82, min cluster size 3, window 7d, batch cap
+  300, 40s budget). Pipeline (Slice B), dashboard (Slice C), review+deploy (Slice D) next.
