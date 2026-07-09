@@ -521,3 +521,40 @@ Choices made during implementation that the planning docs did not fully specify
      no provider type escapes. (LOW) email recipient/sender-refused is permanent, not retried.
 - **Verified:** 278 backend tests (adapter classification per-status/per-exception, factory
   selection + non-dev fail-closed guard, provider isolation) + admin Channel column.
+
+## V1.5 — Knowledge management (admin upload/approve/remove/replace) (2026-07-09)
+
+- **A new admin Knowledge view manages the retrieval corpus at runtime.** Admins upload a
+  document (stored but NOT searchable), then **approve** it — which ATTACHES it to the Vector
+  Store. Serving is gated by *attachment* (retrieval queries the store directly; it never reads
+  Mongo's `approved` flag), so approve is the true serving gate. **Remove** DETACHES; **replace**
+  uploads a new (unapproved) file and retires the old. Same provider-isolation rule as retrieval:
+  the OpenAI client, file ids, and errors never leave `app/domain/knowledge/store.py`
+  (`KnowledgeStore` boundary — `SimulatedKnowledgeStore` default, `OpenAIKnowledgeStore` when a
+  Vector Store is configured); the admin API exposes only the local `kbs_` id (invariant #6).
+  A `poll_indexing` worker job watches ingestion to completion.
+- **Adversarial-review fixes (6 confirmed, provider-isolation 0 findings, 3 rejected).**
+  1. (MED) `poll_indexing` used the retry/backoff mechanism for "still ingesting", dead-lettering
+     a healthy index after ~75s and firing a spurious CRITICAL page. Now: backoff is capped
+     (`job_backoff_max_seconds=300`) and the poll gets a generous budget
+     (`knowledge_index_poll_attempts=15` → ~45 min), and a genuine give-up reconciles the source
+     to `indexing_status="failed"` via a new `_on_dead_letter` branch (truthful UI, not a stuck
+     "Indexing…").
+  2. (MED) `run_poll_indexing` ignored lifecycle, so a source removed/replaced (hence DETACHED)
+     mid-index kept polling a 404ing file until it dead-lettered. Now it no-ops on
+     `lifecycle != "active"`.
+  3. (MED) Upload buffered the whole body before the 5 MB check. Now: a global middleware rejects
+     any request whose `Content-Length` exceeds `max_request_body_bytes=10 MB` before routing/parse/
+     auth (new `PAYLOAD_TOO_LARGE` code), and `_read_upload` reads only `MAX+1` so the handler
+     never materializes an oversized body. (Document a proxy `request_body max_size` for the
+     chunked/no-Content-Length case.)
+  4. (MED) `approve` audited AFTER attaching (serving) — a failed audit-write would leave served,
+     un-audited content (invariant #12). All content mutations (upload/approve/remove/replace) now
+     **audit before the store mutation**, matching the codebase convention (redeliver/approve_canonical).
+  5. (LOW) The admin UI showed unapproved (pending) sources as "Indexing…". Now unapproved reads
+     "Not indexed"; "Indexing…" is reserved for approved+pending.
+  6. (LOW) A 401 during an admin write showed an inline error instead of returning to login.
+     `useAdminAction` now routes `AdminAuthError` to `onAuthError` (all admin views benefit).
+- **Verified:** full backend suite (ruff + mypy + pytest, incl. new poll-lifecycle/dead-letter,
+  oversized-body 413, and audit-before tests) + 45 frontend tests (build + vitest, incl. label +
+  401-routing coverage).

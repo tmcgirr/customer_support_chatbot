@@ -17,7 +17,7 @@ export default function ConversationDetail({
 }) {
   const [revealed, setRevealed] = useState<RevealedConversation | null>(null);
   const isAdmin = role === "admin";
-  const { error: actionError, busy, run } = useAdminAction();
+  const { error: actionError, busy, run } = useAdminAction(onAuthError);
 
   const { data, loading, error } = useAdminQuery(
     () => client.getConversation(id),

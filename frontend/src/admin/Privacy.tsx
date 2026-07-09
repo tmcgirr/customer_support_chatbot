@@ -23,7 +23,7 @@ export default function Privacy({
   // Bump to re-fetch after a successful verification.
   const [reloadNonce, setReloadNonce] = useState(0);
   const isAdmin = role === "admin";
-  const { error: actionError, busy, run } = useAdminAction();
+  const { error: actionError, busy, run } = useAdminAction(onAuthError);
 
   const { data, loading, error } = useAdminQuery(
     () => client.listPrivacyRequests(),

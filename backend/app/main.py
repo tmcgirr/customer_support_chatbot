@@ -18,7 +18,7 @@ from app.api.public import privacy as public_privacy
 from app.api.public import requests as public_requests
 from app.core.config import get_settings
 from app.core.db import create_mongo_client, get_database
-from app.core.errors import register_exception_handlers
+from app.core.errors import ErrorCode, error_response, register_exception_handlers
 from app.core.logging import configure_logging, get_logger, new_request_id, request_id_var
 from app.domain.audit.repository import ensure_indexes as ensure_audit_indexes
 from app.domain.canonical.repository import ensure_indexes as ensure_canonical_indexes
@@ -27,6 +27,7 @@ from app.domain.feedback.repository import ensure_indexes as ensure_feedback_ind
 from app.domain.jobs.repository import ensure_indexes as ensure_job_indexes
 from app.domain.knowledge.repository import ensure_indexes as ensure_knowledge_indexes
 from app.domain.knowledge.search import KnowledgeSearch
+from app.domain.knowledge.store import build_knowledge_store
 from app.domain.privacy.repository import ensure_indexes as ensure_privacy_indexes
 from app.domain.ratelimit.repository import ensure_indexes as ensure_ratelimit_indexes
 from app.domain.requests.repository import ensure_indexes as ensure_request_indexes
@@ -51,12 +52,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.db = database
     app.state.adapter = OpenAIResponsesAdapter()
     app.state.knowledge_search = KnowledgeSearch()
+    app.state.knowledge_store = build_knowledge_store(get_settings())
     logger.info("app.startup", extra={"context": {"db": database.name}})
     try:
         yield
     finally:
         await app.state.adapter.aclose()
         await app.state.knowledge_search.aclose()
+        store_close = getattr(app.state.knowledge_store, "aclose", None)
+        if store_close is not None:
+            await store_close()
         client.close()
         logger.info("app.shutdown")
 
@@ -83,7 +88,20 @@ def create_app() -> FastAPI:
         token = request_id_var.set(rid)
         start = time.perf_counter()
         try:
-            response = await call_next(request)
+            # Reject an oversized declared body before it is routed/parsed, so a
+            # multi-GB upload can't exhaust the shared process's memory/temp disk
+            # (the multipart parser spools file parts to disk during parsing, before
+            # the route's auth + size check ever run). Streaming bodies without a
+            # Content-Length are additionally bounded by the per-endpoint read cap.
+            content_length = request.headers.get("content-length")
+            if (
+                content_length is not None
+                and content_length.isdigit()
+                and int(content_length) > settings.max_request_body_bytes
+            ):
+                response: Response = error_response(ErrorCode.PAYLOAD_TOO_LARGE)
+            else:
+                response = await call_next(request)
         finally:
             request_id_var.reset(token)
         duration_ms = round((time.perf_counter() - start) * 1000, 1)

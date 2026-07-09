@@ -4,7 +4,7 @@ import type { AdminClient, AdminRole } from "./api";
 import { useAdminAction } from "./useAdminAction";
 import { useAdminQuery } from "./useAdminQuery";
 
-export default function Knowledge({
+export default function Canonical({
   client,
   role,
   onAuthError,
@@ -16,7 +16,7 @@ export default function Knowledge({
   // Bump to re-fetch after a successful approval.
   const [reloadNonce, setReloadNonce] = useState(0);
   const isAdmin = role === "admin";
-  const { error: actionError, busy, run } = useAdminAction();
+  const { error: actionError, busy, run } = useAdminAction(onAuthError);
 
   const { data, loading, error } = useAdminQuery(
     () => client.listCanonical(),

@@ -9,6 +9,13 @@
 {$STAGING_DOMAIN} {
 	encode zstd gzip
 
+	# Reject oversized bodies at the edge (defense-in-depth for the app's own
+	# Content-Length guard; also covers chunked bodies with no Content-Length).
+	# Comfortably above the 5 MB knowledge-upload cap + multipart overhead.
+	request_body {
+		max_size 11MB
+	}
+
 	# API — stream responses immediately (SSE-safe).
 	handle /api/* {
 		reverse_proxy api:8000 {

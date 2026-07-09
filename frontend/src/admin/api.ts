@@ -145,6 +145,31 @@ export interface CanonicalResponse {
   answers: CanonicalAnswer[];
 }
 
+/**
+ * A managed knowledge document (file uploaded to the Vector Store). Provider ids
+ * (OpenAI file / vector-store) are deliberately absent — the backend never exposes
+ * them to the browser (invariant #6).
+ */
+export interface KnowledgeSource {
+  source_id: string;
+  title: string;
+  category: string;
+  /** Approved sources are attached to the store and served by retrieval. */
+  approved: boolean;
+  /** active | replaced | removed */
+  lifecycle: string;
+  /** pending | indexed | failed — Vector Store ingestion state. */
+  indexing_status: string;
+  version: string;
+  owner: string;
+  review_date: string | null;
+  updated_at: string;
+}
+
+export interface KnowledgeSourcesResponse {
+  sources: KnowledgeSource[];
+}
+
 export interface AuditEntry {
   actor: string;
   role: string;
@@ -202,12 +227,23 @@ export interface AdminClient {
   listCanonical(): Promise<CanonicalResponse>;
   listAudit(): Promise<AuditResponse>;
   listPrivacyRequests(): Promise<PrivacyRequestsResponse>;
+  listKnowledgeSources(): Promise<KnowledgeSourcesResponse>;
   // Privileged actions (admin role; 403 → AdminForbiddenError for a viewer).
   revealRequest(id: string, reason: string): Promise<RevealedRequest>;
   revealConversation(id: string, reason: string): Promise<RevealedConversation>;
   redeliver(id: string, reason: string): Promise<ActionResult>;
   approveCanonical(intent: string, reason: string): Promise<ActionResult>;
   verifyPrivacyRequest(id: string, reason: string): Promise<ActionResult>;
+  // Knowledge management (admin role). Upload/replace send multipart form data.
+  uploadKnowledge(
+    file: File,
+    title: string,
+    category: string,
+    reason: string,
+  ): Promise<KnowledgeSource>;
+  approveKnowledge(sourceId: string, reason: string): Promise<KnowledgeSource>;
+  removeKnowledge(sourceId: string, reason: string): Promise<KnowledgeSource>;
+  replaceKnowledge(sourceId: string, file: File, reason: string): Promise<KnowledgeSource>;
 }
 
 function basicHeader(creds: AdminCreds): string {
@@ -215,22 +251,7 @@ function basicHeader(creds: AdminCreds): string {
 }
 
 export function createAdminClient(creds: AdminCreds): AdminClient {
-  async function request<T>(
-    path: string,
-    options: { method?: string; body?: unknown } = {},
-  ): Promise<T> {
-    const headers: Record<string, string> = {
-      Authorization: basicHeader(creds),
-      Accept: "application/json",
-    };
-    if (options.body !== undefined) {
-      headers["Content-Type"] = "application/json";
-    }
-    const response = await fetch(`${API_BASE}/api/v1/admin${path}`, {
-      method: options.method ?? "GET",
-      headers,
-      body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
-    });
+  async function handle<T>(response: Response): Promise<T> {
     if (response.status === 401) {
       throw new AdminAuthError();
     }
@@ -252,6 +273,38 @@ export function createAdminClient(creds: AdminCreds): AdminClient {
     return response.json() as Promise<T>;
   }
 
+  async function request<T>(
+    path: string,
+    options: { method?: string; body?: unknown } = {},
+  ): Promise<T> {
+    const headers: Record<string, string> = {
+      Authorization: basicHeader(creds),
+      Accept: "application/json",
+    };
+    if (options.body !== undefined) {
+      headers["Content-Type"] = "application/json";
+    }
+    const response = await fetch(`${API_BASE}/api/v1/admin${path}`, {
+      method: options.method ?? "GET",
+      headers,
+      body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+    });
+    return handle<T>(response);
+  }
+
+  /**
+   * POST multipart/form-data (file uploads). We deliberately do NOT set
+   * Content-Type — the browser adds it with the correct multipart boundary.
+   */
+  async function requestForm<T>(path: string, form: FormData): Promise<T> {
+    const response = await fetch(`${API_BASE}/api/v1/admin${path}`, {
+      method: "POST",
+      headers: { Authorization: basicHeader(creds), Accept: "application/json" },
+      body: form,
+    });
+    return handle<T>(response);
+  }
+
   return {
     getMe: () => request<MeResponse>("/me"),
     getDashboard: () => request<DashboardResponse>("/dashboard"),
@@ -269,6 +322,7 @@ export function createAdminClient(creds: AdminCreds): AdminClient {
     listCanonical: () => request<CanonicalResponse>("/canonical"),
     listAudit: () => request<AuditResponse>("/audit"),
     listPrivacyRequests: () => request<PrivacyRequestsResponse>("/privacy-requests"),
+    listKnowledgeSources: () => request<KnowledgeSourcesResponse>("/knowledge-sources"),
     revealRequest: (id: string, reason: string) =>
       request<RevealedRequest>(`/requests/${encodeURIComponent(id)}/reveal`, {
         method: "POST",
@@ -294,5 +348,32 @@ export function createAdminClient(creds: AdminCreds): AdminClient {
         method: "POST",
         body: { reason },
       }),
+    uploadKnowledge: (file: File, title: string, category: string, reason: string) => {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("title", title);
+      form.append("category", category);
+      form.append("reason", reason);
+      return requestForm<KnowledgeSource>("/knowledge-sources", form);
+    },
+    approveKnowledge: (sourceId: string, reason: string) =>
+      request<KnowledgeSource>(`/knowledge-sources/${encodeURIComponent(sourceId)}/approve`, {
+        method: "POST",
+        body: { reason },
+      }),
+    removeKnowledge: (sourceId: string, reason: string) =>
+      request<KnowledgeSource>(`/knowledge-sources/${encodeURIComponent(sourceId)}/remove`, {
+        method: "POST",
+        body: { reason },
+      }),
+    replaceKnowledge: (sourceId: string, file: File, reason: string) => {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("reason", reason);
+      return requestForm<KnowledgeSource>(
+        `/knowledge-sources/${encodeURIComponent(sourceId)}/replace`,
+        form,
+      );
+    },
   };
 }

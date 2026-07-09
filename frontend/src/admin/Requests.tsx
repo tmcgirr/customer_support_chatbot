@@ -30,7 +30,7 @@ export default function Requests({
   const [revealed, setRevealed] = useState<Record<string, RevealedRequest>>({});
 
   const isAdmin = role === "admin";
-  const { error: actionError, busy, run } = useAdminAction();
+  const { error: actionError, busy, run } = useAdminAction(onAuthError);
 
   const { data, loading, error } = useAdminQuery(
     () =>

@@ -27,6 +27,14 @@
 		-Server
 	}
 
+	# Reject oversized bodies at the edge (defense-in-depth for the app's own
+	# Content-Length guard; also covers chunked bodies with no Content-Length).
+	# Comfortably above the 5 MB knowledge-upload cap + multipart overhead. A CDN
+	# in front should enforce its own volumetric limit too.
+	request_body {
+		max_size 11MB
+	}
+
 	# API — load-balanced across replicas, streamed immediately (SSE-safe).
 	handle /api/* {
 		reverse_proxy {

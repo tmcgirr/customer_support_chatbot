@@ -8,9 +8,10 @@ import {
   type MeResponse,
 } from "./api";
 import Audit from "./Audit";
+import Canonical from "./Canonical";
 import Conversations from "./Conversations";
 import Dashboard from "./Dashboard";
-import Knowledge from "./Knowledge";
+import KnowledgeSources from "./KnowledgeSources";
 import Privacy from "./Privacy";
 import Requests from "./Requests";
 import Unresolved from "./Unresolved";
@@ -20,6 +21,7 @@ type Tab =
   | "conversations"
   | "requests"
   | "knowledge"
+  | "canonical"
   | "unresolved"
   | "audit"
   | "privacy";
@@ -29,6 +31,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "conversations", label: "Conversations" },
   { id: "requests", label: "Requests" },
   { id: "knowledge", label: "Knowledge" },
+  { id: "canonical", label: "Canonical" },
   { id: "unresolved", label: "Unresolved" },
   { id: "audit", label: "Audit" },
   { id: "privacy", label: "Privacy" },
@@ -144,7 +147,10 @@ function Shell({
           <Requests key={viewKey} client={client} role={role} onAuthError={onSignOut} />
         )}
         {tab === "knowledge" && (
-          <Knowledge key={viewKey} client={client} role={role} onAuthError={onSignOut} />
+          <KnowledgeSources key={viewKey} client={client} role={role} onAuthError={onSignOut} />
+        )}
+        {tab === "canonical" && (
+          <Canonical key={viewKey} client={client} role={role} onAuthError={onSignOut} />
         )}
         {tab === "unresolved" && (
           <Unresolved key={viewKey} client={client} onAuthError={onSignOut} />

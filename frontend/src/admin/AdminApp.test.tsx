@@ -20,6 +20,11 @@ const revealConversation = vi.fn();
 const redeliver = vi.fn();
 const approveCanonical = vi.fn();
 const verifyPrivacyRequest = vi.fn();
+const listKnowledgeSources = vi.fn();
+const uploadKnowledge = vi.fn();
+const approveKnowledge = vi.fn();
+const removeKnowledge = vi.fn();
+const replaceKnowledge = vi.fn();
 
 vi.mock("./api", () => ({
   createAdminClient: () => ({
@@ -37,6 +42,11 @@ vi.mock("./api", () => ({
     redeliver,
     approveCanonical,
     verifyPrivacyRequest,
+    listKnowledgeSources,
+    uploadKnowledge,
+    approveKnowledge,
+    removeKnowledge,
+    replaceKnowledge,
   }),
   AdminAuthError: class AdminAuthError extends Error {},
   AdminForbiddenError: class AdminForbiddenError extends Error {},
@@ -76,6 +86,19 @@ const DRAFT_ANSWER = {
   review_date: "2026-08-01",
 };
 
+const KNOWLEDGE_SOURCE = {
+  source_id: "kbs_1",
+  title: "Portal Guide",
+  category: "portal",
+  approved: false,
+  lifecycle: "active",
+  indexing_status: "pending",
+  version: "1",
+  owner: "ops",
+  review_date: null,
+  updated_at: "2026-07-01",
+};
+
 const PENDING_PRIVACY = {
   request_id: "prv_1",
   type: "deletion",
@@ -104,6 +127,9 @@ beforeEach(() => {
   listCanonical.mockResolvedValue({ answers: [DRAFT_ANSWER] });
   listAudit.mockResolvedValue({ entries: [] });
   listPrivacyRequests.mockResolvedValue({ requests: [PENDING_PRIVACY] });
+  listKnowledgeSources.mockResolvedValue({ sources: [KNOWLEDGE_SOURCE] });
+  approveKnowledge.mockResolvedValue({ ...KNOWLEDGE_SOURCE, approved: true });
+  removeKnowledge.mockResolvedValue({ ...KNOWLEDGE_SOURCE, lifecycle: "removed" });
   verifyPrivacyRequest.mockResolvedValue({ ok: true, detail: "verified" });
   revealRequest.mockResolvedValue({
     request_id: "req_1",
@@ -163,8 +189,8 @@ describe("AdminApp", () => {
     expect(screen.queryByRole("button", { name: "Reveal" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Redeliver" })).not.toBeInTheDocument();
 
-    // Knowledge: draft answer visible, but no Approve button.
-    fireEvent.click(screen.getByRole("button", { name: "Knowledge" }));
+    // Canonical: draft answer visible, but no Approve button.
+    fireEvent.click(screen.getByRole("button", { name: "Canonical" }));
     expect(await screen.findByText("Pricing")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
   });
@@ -187,8 +213,8 @@ describe("AdminApp", () => {
     expect(screen.getByText(/Jane Doe/)).toBeInTheDocument();
     expect(revealRequest).toHaveBeenCalledWith("req_1", "audit reason");
 
-    // Knowledge: admin sees Approve on a draft answer.
-    fireEvent.click(screen.getByRole("button", { name: "Knowledge" }));
+    // Canonical: admin sees Approve on a draft answer.
+    fireEvent.click(screen.getByRole("button", { name: "Canonical" }));
     expect(await screen.findByRole("button", { name: "Approve" })).toBeInTheDocument();
   });
 
@@ -221,5 +247,54 @@ describe("AdminApp", () => {
     await waitFor(() =>
       expect(verifyPrivacyRequest).toHaveBeenCalledWith("prv_1", "audit reason"),
     );
+  });
+
+  it("shows the Knowledge upload form and lets an admin approve a source", async () => {
+    render(<AdminApp />);
+    signIn();
+    await screen.findByText("admin (admin)");
+
+    fireEvent.click(screen.getByRole("button", { name: "Knowledge" }));
+
+    // The source row and the admin-only upload form are both visible.
+    expect(await screen.findByText("Portal Guide")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Upload" })).toBeInTheDocument();
+    // An unapproved (pending) source must NOT read as actively "Indexing…".
+    expect(screen.getByText("Not indexed")).toBeInTheDocument();
+
+    // Approve on an active, unapproved source prompts for a reason and calls
+    // approveKnowledge(source_id, reason).
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    await waitFor(() => expect(approveKnowledge).toHaveBeenCalledWith("kbs_1", "audit reason"));
+  });
+
+  it("drops back to login when a knowledge action returns 401", async () => {
+    approveKnowledge.mockRejectedValue(new AdminAuthError());
+    render(<AdminApp />);
+    signIn();
+    await screen.findByText("admin (admin)");
+
+    fireEvent.click(screen.getByRole("button", { name: "Knowledge" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
+
+    // A 401 mid-action invalidates the session → back to the login screen (not an
+    // inline error), matching the list-fetch path.
+    expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+  });
+
+  it("hides the Knowledge upload form and row actions from a viewer", async () => {
+    getMe.mockResolvedValue({ username: "vera", role: "viewer" });
+    render(<AdminApp />);
+    signIn();
+    await screen.findByText("vera (viewer)");
+
+    fireEvent.click(screen.getByRole("button", { name: "Knowledge" }));
+    // Data is visible…
+    expect(await screen.findByText("Portal Guide")).toBeInTheDocument();
+    // …but no upload form and no privileged row actions.
+    expect(screen.queryByRole("button", { name: "Upload" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Replace" })).not.toBeInTheDocument();
   });
 });

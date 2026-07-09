@@ -12,6 +12,7 @@ dependencies = [
     "python-ulid>=2.7",
     "openai>=1.66",
     "pyyaml>=6.0",
+    "python-multipart>=0.0.12",
 ]
 
 [dependency-groups]

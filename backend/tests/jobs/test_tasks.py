@@ -11,11 +11,50 @@ from app.domain.jobs.tasks import (
     run_abandonment_sweep,
     run_daily_aggregates,
     run_knowledge_review_reminder,
+    run_poll_indexing,
     run_stale_lock_sweep,
 )
+from app.domain.knowledge.models import IndexingStatus
 from app.domain.knowledge.repository import KnowledgeSourceRepository
 from app.domain.requests.repository import RequestRepository
 from tests.jobs.conftest import Database
+
+
+class _NoPollStore:
+    """A store that fails loudly if any method is called — proves run_poll_indexing
+    short-circuits without touching the provider for a non-pollable source."""
+
+    channel = "test"
+
+    async def upload(self, *, filename: str, content: bytes) -> str:
+        raise AssertionError("unexpected upload")
+
+    async def attach(self, file_id: str, *, attributes: dict[str, str]) -> IndexingStatus:
+        raise AssertionError("unexpected attach")
+
+    async def status(self, file_id: str) -> IndexingStatus:
+        raise AssertionError("must not poll a detached/inactive source")
+
+    async def detach(self, file_id: str) -> None:
+        raise AssertionError("unexpected detach")
+
+
+async def test_poll_indexing_noops_on_inactive_source(db: Database) -> None:
+    # A source removed/replaced after approval is DETACHED; polling its status would
+    # 404 and dead-letter uselessly. run_poll_indexing must no-op on lifecycle != active.
+    knowledge = KnowledgeSourceRepository(db["knowledge_sources"])
+    await knowledge.record_source(
+        source_id="kbs_inactive",
+        openai_file_id="file_x",
+        vector_store_id="vs",
+        title="Doc",
+        category="general",
+        approved=False,
+        lifecycle="removed",
+        indexing_status="pending",
+    )
+    result = await run_poll_indexing(knowledge, _NoPollStore(), source_id="kbs_inactive")
+    assert result == {"status": "inactive"}
 
 
 async def test_stale_lock_sweep_clears_leaked_lock(db: Database) -> None:

@@ -109,6 +109,13 @@ class Settings(BaseSettings):
     # finishes (or times out) before its lease can be reclaimed — no live double-run.
     worker_job_timeout_seconds: float = 50.0
     job_backoff_base_seconds: float = 5.0  # retry backoff = base * 2^(attempts-1)
+    # Cap the exponential backoff so a job with a large attempt budget (e.g. index
+    # polling) doesn't schedule its next attempt hours out. base*2^(attempts-1) is
+    # clamped to this ceiling.
+    job_backoff_max_seconds: float = 300.0
+    # poll_indexing attempt budget: with the capped backoff this spans ~45 min, well
+    # past real Vector Store ingestion, so a healthy-but-slow index never dead-letters.
+    knowledge_index_poll_attempts: int = 15
     conversation_abandon_seconds: int = 86400  # 24h with no activity → abandoned
     # A request still received/delivering this long after creation is reconciled by
     # the delivery sweep (its job crashed/timed-out, or its enqueue was lost).
@@ -116,6 +123,12 @@ class Settings(BaseSettings):
     # Pending-job count above which the worker fires a queue-backlog WARNING alert
     # (dead-letter / delivery-failed / privacy-failed alerts fire on any > 0).
     alert_queue_depth_threshold: int = 100
+    # Reject any request whose declared Content-Length exceeds this before it is
+    # parsed (defends the shared process from an oversized-body memory/disk blowup;
+    # well above the 5 MB knowledge-upload cap + multipart overhead, and far above
+    # chat/request bodies). Streaming bodies without Content-Length are additionally
+    # bounded by the per-endpoint read cap; document a proxy body cap for defense.
+    max_request_body_bytes: int = 10 * 1024 * 1024
 
     # --- Request delivery transport (pluggable; V1.5). 'simulated' (default) is a
     # functional MOCK: it records what WOULD be sent (visible in admin), needs no creds,

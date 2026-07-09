@@ -105,6 +105,31 @@ class KnowledgeSourceRepository:
         docs = await self._collection.find().sort("_id", -1).to_list(length=None)
         return [KnowledgeSource.model_validate(doc) for doc in docs]
 
+    async def get(self, source_id: str) -> KnowledgeSource | None:
+        doc = await self._collection.find_one({"_id": source_id})
+        return KnowledgeSource.model_validate(doc) if doc is not None else None
+
+    async def update_indexing_status(self, source_id: str, status: IndexingStatus) -> bool:
+        """Set a source's indexing status (from the poll_indexing job)."""
+        result = await self._collection.update_one(
+            {"_id": source_id}, {"$set": {"indexing_status": status, "updated_at": _now()}}
+        )
+        return result.modified_count > 0
+
+    async def set_lifecycle(self, source_id: str, lifecycle: KnowledgeLifecycle) -> bool:
+        """Move a source to replaced/removed (admin manage actions)."""
+        result = await self._collection.update_one(
+            {"_id": source_id}, {"$set": {"lifecycle": lifecycle, "updated_at": _now()}}
+        )
+        return result.modified_count > 0
+
+    async def set_approved(self, source_id: str, approved: bool) -> bool:
+        """Approve/unapprove a source. Only approved+active+indexed sources serve."""
+        result = await self._collection.update_one(
+            {"_id": source_id}, {"$set": {"approved": approved, "updated_at": _now()}}
+        )
+        return result.modified_count > 0
+
     async def list_due_for_review(self, as_of: datetime) -> list[KnowledgeSource]:
         """Active sources whose ``review_date`` has passed — the knowledge-review
         reminder job surfaces these for a content owner to re-approve (contracts §7)."""

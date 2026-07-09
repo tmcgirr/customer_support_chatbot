@@ -4,10 +4,11 @@ PII is masked by default (contracts §10): request contact emails and any email
 embedded in a conversation transcript are shown as ``a***@acme.com``.
 """
 
+import hashlib
 from datetime import datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, File, Form, Query, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.admin.auth import AdminDep, AdminRoleDep
@@ -15,14 +16,25 @@ from app.api.deps import (
     AuditRepoDep,
     CanonicalRepoDep,
     JobRepoDep,
+    KnowledgeRepoDep,
+    KnowledgeStoreDep,
     PrivacyRepoDep,
     RepoDep,
     RequestRepoDep,
 )
+from app.core import ids
 from app.core.config import get_settings
 from app.core.errors import AppError, ErrorCode
+from app.core.logging import get_logger
 from app.core.masking import mask_email, mask_pii_in_text
+from app.domain.knowledge.models import KnowledgeSource
+from app.domain.knowledge.store import KnowledgeStore, KnowledgeStoreError
 from app.domain.monitoring.alerts import evaluate_alerts
+
+logger = get_logger("app.admin")
+
+# Cap uploaded knowledge files (markdown/text docs — a few hundred KB is plenty).
+_MAX_KNOWLEDGE_BYTES = 5 * 1024 * 1024
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
@@ -519,6 +531,279 @@ async def approve_canonical(
     )
     await canonical.approve(intent)
     return ActionResponse(ok=True, detail=f"Approved canonical answer for {intent!r}.")
+
+
+# --- Knowledge management (V1.5; admin role, audited). Provider ids never exposed (#6). ---
+
+
+class KnowledgeSummary(BaseModel):
+    source_id: str
+    title: str
+    category: str
+    approved: bool
+    lifecycle: str
+    indexing_status: str
+    version: str
+    owner: str
+    review_date: datetime | None
+    updated_at: datetime
+
+
+class KnowledgeListResponse(BaseModel):
+    sources: list[KnowledgeSummary]
+
+
+def _knowledge_summary(s: KnowledgeSource) -> KnowledgeSummary:
+    # NEVER expose openai_file_id / vector_store_id to the browser (invariant #6).
+    return KnowledgeSummary(
+        source_id=s.id,
+        title=s.title,
+        category=s.category,
+        approved=s.approved,
+        lifecycle=s.lifecycle,
+        indexing_status=s.indexing_status,
+        version=s.version,
+        owner=s.owner,
+        review_date=s.review_date,
+        updated_at=s.updated_at,
+    )
+
+
+async def _read_upload(file: UploadFile) -> bytes:
+    # Read at most the cap (+1 to detect overflow) so a large part can't materialize
+    # unbounded in memory here — independent of the global Content-Length guard, which
+    # covers the pre-parse spool. Together they bound both memory and disk.
+    content = await file.read(_MAX_KNOWLEDGE_BYTES + 1)
+    if not content:
+        raise AppError(ErrorCode.INVALID_REQUEST, "The uploaded file is empty.")
+    if len(content) > _MAX_KNOWLEDGE_BYTES:
+        raise AppError(ErrorCode.PAYLOAD_TOO_LARGE, "The uploaded file is too large.")
+    return content
+
+
+async def _record_upload(
+    store: KnowledgeStore,
+    knowledge: KnowledgeRepoDep,
+    *,
+    source_id: str,
+    filename: str,
+    content: bytes,
+    title: str,
+    category: str,
+) -> KnowledgeSource:
+    """Store the bytes + record governance metadata under a caller-supplied ``source_id``
+    (so the caller can write the audit record first). NOT attached to the store yet — a
+    source only becomes searchable on approve (so unapproved content is never served)."""
+    try:
+        file_id = await store.upload(filename=filename, content=content)
+    except KnowledgeStoreError as exc:
+        raise AppError(
+            ErrorCode.INTERNAL_ERROR, "Knowledge upload failed.", retryable=exc.retryable
+        ) from None
+    return await knowledge.record_source(
+        source_id=source_id,
+        openai_file_id=file_id,
+        vector_store_id=get_settings().openai_vector_store_id or "simulated",
+        title=title,
+        category=category,
+        approved=False,
+        lifecycle="active",
+        indexing_status="pending",  # awaiting approval → attach → index
+        source_url=f"/knowledge/{source_id}",
+        checksum=hashlib.sha256(content).hexdigest(),
+    )
+
+
+@router.get("/knowledge-sources", response_model=KnowledgeListResponse)
+async def list_knowledge_sources(
+    _admin: AdminDep, knowledge: KnowledgeRepoDep
+) -> KnowledgeListResponse:
+    return KnowledgeListResponse(
+        sources=[_knowledge_summary(s) for s in await knowledge.list_sources()]
+    )
+
+
+@router.post("/knowledge-sources", response_model=KnowledgeSummary)
+async def upload_knowledge(
+    admin: AdminRoleDep,
+    knowledge: KnowledgeRepoDep,
+    store: KnowledgeStoreDep,
+    audit: AuditRepoDep,
+    file: Annotated[UploadFile, File()],
+    title: Annotated[str, Form(min_length=1, max_length=200)],
+    reason: Annotated[str, Form(min_length=1, max_length=500)],
+    category: Annotated[str, Form(max_length=100)] = "general",
+) -> KnowledgeSummary:
+    """Upload a knowledge file (admin only, audited). It is stored but NOT searchable
+    until approved — approve attaches it to the Vector Store."""
+    content = await _read_upload(file)
+    source_id = ids.knowledge_source_id()
+    # Audit BEFORE the store write (codebase convention): a failed audit must never
+    # leave an un-audited content action.
+    await audit.record(
+        actor=admin.username,
+        role=admin.role,
+        action="upload_knowledge",
+        target_type="knowledge_source",
+        target_id=source_id,
+        reason=reason,
+    )
+    source = await _record_upload(
+        store,
+        knowledge,
+        source_id=source_id,
+        filename=file.filename or "upload.md",
+        content=content,
+        title=title,
+        category=category,
+    )
+    return _knowledge_summary(source)
+
+
+@router.post("/knowledge-sources/{source_id}/approve", response_model=KnowledgeSummary)
+async def approve_knowledge(
+    source_id: str,
+    body: ReasonBody,
+    admin: AdminRoleDep,
+    knowledge: KnowledgeRepoDep,
+    store: KnowledgeStoreDep,
+    jobs: JobRepoDep,
+    audit: AuditRepoDep,
+) -> KnowledgeSummary:
+    """Approve a source: ATTACH it to the Vector Store so retrieval serves it, then poll
+    indexing to completion (admin only, audited)."""
+    source = await knowledge.get(source_id)
+    if source is None or source.lifecycle != "active" or source.openai_file_id is None:
+        raise AppError(ErrorCode.INVALID_REQUEST, "No active knowledge source to approve.")
+    # Audit BEFORE attaching (which makes the file searchable): approve is the serving
+    # gate, so a failed audit must never leave served-but-un-audited content (#12).
+    await audit.record(
+        actor=admin.username,
+        role=admin.role,
+        action="approve_knowledge",
+        target_type="knowledge_source",
+        target_id=source_id,
+        reason=body.reason,
+    )
+    try:
+        indexing = await store.attach(
+            source.openai_file_id,
+            attributes={
+                "source_id": source.id,
+                "title": source.title[:512],
+                "category": source.category[:512],
+                "display_url": (source.source_url or f"/knowledge/{source.id}")[:512],
+            },
+        )
+    except KnowledgeStoreError as exc:
+        raise AppError(
+            ErrorCode.INTERNAL_ERROR, "Attaching to the store failed.", retryable=exc.retryable
+        ) from None
+    await knowledge.set_approved(source_id, approved=True)
+    await knowledge.update_indexing_status(source_id, indexing)
+    if indexing == "pending":
+        # Generous attempt budget: with the capped backoff this re-polls for ~45 min,
+        # so a healthy-but-slow index never dead-letters (invariant: safe under retry).
+        await jobs.enqueue(
+            "poll_indexing",
+            resource_id=source_id,
+            max_attempts=get_settings().knowledge_index_poll_attempts,
+        )
+    updated = await knowledge.get(source_id)
+    assert updated is not None
+    return _knowledge_summary(updated)
+
+
+@router.post("/knowledge-sources/{source_id}/remove", response_model=KnowledgeSummary)
+async def remove_knowledge(
+    source_id: str,
+    body: ReasonBody,
+    admin: AdminRoleDep,
+    knowledge: KnowledgeRepoDep,
+    store: KnowledgeStoreDep,
+    audit: AuditRepoDep,
+) -> KnowledgeSummary:
+    """Unpublish a source: DETACH it from the Vector Store (stops retrieval) + mark it
+    removed (admin only, audited)."""
+    source = await knowledge.get(source_id)
+    if source is None or source.lifecycle == "removed":
+        raise AppError(ErrorCode.INVALID_REQUEST, "No knowledge source to remove.")
+    # Audit BEFORE detaching (which stops serving): a failed audit must never leave an
+    # un-audited content-removal action (#12).
+    await audit.record(
+        actor=admin.username,
+        role=admin.role,
+        action="remove_knowledge",
+        target_type="knowledge_source",
+        target_id=source_id,
+        reason=body.reason,
+    )
+    # Only an APPROVED source is attached to the store; detaching an unapproved
+    # (never-attached) file would 404 on the real store. approved ⟺ attached.
+    if source.openai_file_id and source.approved:
+        try:
+            await store.detach(source.openai_file_id)
+        except KnowledgeStoreError as exc:
+            raise AppError(
+                ErrorCode.INTERNAL_ERROR,
+                "Detaching from the store failed.",
+                retryable=exc.retryable,
+            ) from None
+    await knowledge.set_lifecycle(source_id, "removed")
+    await knowledge.set_approved(source_id, approved=False)
+    updated = await knowledge.get(source_id)
+    assert updated is not None
+    return _knowledge_summary(updated)
+
+
+@router.post("/knowledge-sources/{source_id}/replace", response_model=KnowledgeSummary)
+async def replace_knowledge(
+    source_id: str,
+    admin: AdminRoleDep,
+    knowledge: KnowledgeRepoDep,
+    store: KnowledgeStoreDep,
+    audit: AuditRepoDep,
+    file: Annotated[UploadFile, File()],
+    reason: Annotated[str, Form(min_length=1, max_length=500)],
+) -> KnowledgeSummary:
+    """Replace a source's file: upload the new one (unapproved, awaiting approval), then
+    detach + retire the old (admin only, audited)."""
+    old = await knowledge.get(source_id)
+    if old is None or old.lifecycle != "active":
+        raise AppError(ErrorCode.INVALID_REQUEST, "No active knowledge source to replace.")
+    content = await _read_upload(file)
+    new_source_id = ids.knowledge_source_id()
+    # Audit BEFORE the mutations (which retire the served old source): a failed audit
+    # must never leave an un-audited content-replace action (#12).
+    await audit.record(
+        actor=admin.username,
+        role=admin.role,
+        action="replace_knowledge",
+        target_type="knowledge_source",
+        target_id=source_id,
+        reason=reason,
+    )
+    new = await _record_upload(
+        store,
+        knowledge,
+        source_id=new_source_id,
+        filename=file.filename or "upload.md",
+        content=content,
+        title=old.title,
+        category=old.category,
+    )
+    # Only detach an APPROVED (attached) old source; an unapproved one was never in
+    # the store, so detaching it would 404 on the real store. approved ⟺ attached.
+    if old.openai_file_id and old.approved:
+        try:
+            await store.detach(old.openai_file_id)
+        except KnowledgeStoreError:
+            # Non-fatal: the new record exists; the old file can be cleaned via remove.
+            logger.warning(
+                "knowledge.replace.detach_failed", extra={"context": {"source_id": source_id}}
+            )
+    await knowledge.set_lifecycle(source_id, "replaced")
+    return _knowledge_summary(new)
 
 
 @router.get("/privacy-requests", response_model=PrivacyListResponse)

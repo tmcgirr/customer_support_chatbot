@@ -35,6 +35,7 @@ from app.domain.jobs.tasks import (
     run_abandonment_sweep,
     run_daily_aggregates,
     run_knowledge_review_reminder,
+    run_poll_indexing,
     run_privacy_delete,
     run_privacy_reconcile,
     run_reconcile_deliveries,
@@ -42,6 +43,7 @@ from app.domain.jobs.tasks import (
     run_stale_lock_sweep,
 )
 from app.domain.knowledge.repository import KnowledgeSourceRepository
+from app.domain.knowledge.store import KnowledgeStore, build_knowledge_store
 from app.domain.monitoring.alerts import evaluate_alerts
 from app.domain.privacy.repository import PrivacyRequestRepository
 from app.domain.requests.repository import RequestRepository
@@ -67,13 +69,19 @@ _MAX_DRAIN_PER_TICK = 20  # jobs to run per loop iteration before re-scheduling
 
 class Worker:
     def __init__(
-        self, db: Database, *, settings: Settings, delivery_client: DeliveryClient | None = None
+        self,
+        db: Database,
+        *,
+        settings: Settings,
+        delivery_client: DeliveryClient | None = None,
+        knowledge_store: KnowledgeStore | None = None,
     ) -> None:
         self._jobs = JobRepository(db["jobs"])
         self._conversations = ConversationRepository(db["conversations"])
         self._requests = RequestRepository(db["requests"])
         self._feedback = FeedbackRepository(db["feedback"])
         self._knowledge = KnowledgeSourceRepository(db["knowledge_sources"])
+        self._knowledge_store = knowledge_store or build_knowledge_store(settings)
         self._aggregates = AggregatesRepository(db["aggregates"])
         self._privacy = PrivacyRequestRepository(db["privacy_requests"])
         self._audit = AuditRepository(db["audit"])
@@ -176,7 +184,10 @@ class Worker:
                 self._dispatch(job), timeout=self._settings.worker_job_timeout_seconds
             )
         except Exception as exc:
-            backoff = self._settings.job_backoff_base_seconds * (2 ** (job.attempts - 1))
+            backoff = min(
+                self._settings.job_backoff_base_seconds * (2 ** (job.attempts - 1)),
+                self._settings.job_backoff_max_seconds,
+            )
             status = await self._jobs.fail(
                 job, error_code=type(exc).__name__, backoff_seconds=backoff
             )
@@ -224,6 +235,11 @@ class Worker:
             await self._privacy.mark_failed(
                 job.resource_id, error_code="privacy_delete_dead_letter"
             )
+        elif job.type == "poll_indexing":
+            # Polling gave up (indexing stuck past the budget, or store errors). Mark
+            # the status failed so the admin UI shows the truth (not a perpetual
+            # "Indexing…") and an operator can re-approve to re-poll.
+            await self._knowledge.update_indexing_status(job.resource_id, "failed")
 
     async def _dispatch(self, job: Job) -> None:
         job_type = job.type
@@ -290,8 +306,14 @@ class Worker:
                 logger.warning(
                     "worker.privacy_reenqueued", extra={"context": {"count": reenqueued}}
                 )
+        elif job_type == "poll_indexing":
+            if job.resource_id is None:
+                raise RuntimeError("poll_indexing job has no resource_id")
+            result = await run_poll_indexing(
+                self._knowledge, self._knowledge_store, source_id=job.resource_id
+            )
+            logger.info("worker.indexing_polled", extra={"context": {"result": result}})
         else:
-            # poll_indexing (V5 knowledge upload) lands in a later phase.
             raise RuntimeError(f"no handler registered for job type {job_type!r}")
 
 

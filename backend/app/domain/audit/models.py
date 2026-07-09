@@ -17,6 +17,10 @@ AuditAction = Literal[
     "redeliver_request",
     "approve_canonical",
     "verify_privacy_request",  # V6: admin confirmed a subject's identity
+    "upload_knowledge",  # V1.5 knowledge management
+    "replace_knowledge",
+    "remove_knowledge",
+    "approve_knowledge",
     "export",
     "delete",  # V6: subject erasure executed (also used for content deletion)
 ]

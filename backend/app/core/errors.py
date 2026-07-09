@@ -25,6 +25,7 @@ class ErrorCode(StrEnum):
     UNAUTHORIZED_SESSION = "UNAUTHORIZED_SESSION"
     CONVERSATION_NOT_FOUND = "CONVERSATION_NOT_FOUND"
     MESSAGE_TOO_LONG = "MESSAGE_TOO_LONG"
+    PAYLOAD_TOO_LARGE = "PAYLOAD_TOO_LARGE"
     CONVERSATION_BUSY = "CONVERSATION_BUSY"
     DUPLICATE_ACTION = "DUPLICATE_ACTION"
     RATE_LIMIT = "RATE_LIMIT"
@@ -40,6 +41,7 @@ _HTTP_STATUS: dict[ErrorCode, int] = {
     ErrorCode.UNAUTHORIZED_SESSION: 401,
     ErrorCode.CONVERSATION_NOT_FOUND: 404,
     ErrorCode.MESSAGE_TOO_LONG: 413,
+    ErrorCode.PAYLOAD_TOO_LARGE: 413,
     ErrorCode.CONVERSATION_BUSY: 409,
     # DUPLICATE_ACTION is a *replay detail*, not a failure: duplicate writes must
     # return the original result with HTTP 200 at the route (contracts §9). This
@@ -67,6 +69,7 @@ _DEFAULT_MESSAGE: dict[ErrorCode, str] = {
     ErrorCode.UNAUTHORIZED_SESSION: "Your session is invalid or has expired.",
     ErrorCode.CONVERSATION_NOT_FOUND: "Conversation not found.",
     ErrorCode.MESSAGE_TOO_LONG: "Your message is too long.",
+    ErrorCode.PAYLOAD_TOO_LARGE: "The request body is too large.",
     ErrorCode.CONVERSATION_BUSY: "Please wait for the current response to complete.",
     ErrorCode.DUPLICATE_ACTION: "This action was already submitted.",
     ErrorCode.RATE_LIMIT: "You've reached a usage limit. Please try another contact option.",
@@ -107,6 +110,17 @@ def _envelope(code: ErrorCode, message: str, retryable: bool, detail: str | None
     if detail is not None:
         error["detail"] = detail
     return {"error": error}
+
+
+def error_response(code: ErrorCode, message: str | None = None) -> JSONResponse:
+    """Build the JSON error envelope + status for a code, for callers OUTSIDE the
+    exception-handler stack (e.g. HTTP middleware, which raises can't reach a handler)."""
+    return JSONResponse(
+        status_code=_HTTP_STATUS[code],
+        content=_envelope(
+            code, message or _DEFAULT_MESSAGE[code], _RETRYABLE.get(code, False), None
+        ),
+    )
 
 
 async def _app_error_handler(_request: Request, exc: Exception) -> JSONResponse:

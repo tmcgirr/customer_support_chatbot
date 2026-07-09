@@ -143,16 +143,79 @@ async def test_worker_deadletter_parks_the_request(db: Database) -> None:
     assert stored.last_delivery_error == "delivery_dead_letter"
 
 
-async def test_worker_dead_letters_a_job_with_no_handler(db: Database) -> None:
-    jobs = JobRepository(db["jobs"])
-    # poll_indexing has no handler yet (V5) → dispatch raises → dead-letter (max_attempts=1).
-    job = await jobs.enqueue("poll_indexing", resource_id="kbs_1", max_attempts=1)
+async def test_worker_polls_indexing_to_indexed(db: Database) -> None:
+    # poll_indexing dispatches to the handler; the simulated store reports the file
+    # indexed, so the job completes and the source's status is updated.
+    from app.domain.knowledge.repository import KnowledgeSourceRepository
+    from app.domain.knowledge.store import SimulatedKnowledgeStore
 
-    worker = _worker(db)
+    knowledge = KnowledgeSourceRepository(db["knowledge_sources"])
+    await knowledge.record_source(
+        source_id="kbs_1",
+        openai_file_id="file_1",
+        vector_store_id="vs",
+        title="Doc",
+        category="general",
+        approved=True,
+        lifecycle="active",
+        indexing_status="pending",
+    )
+    jobs = JobRepository(db["jobs"])
+    job = await jobs.enqueue("poll_indexing", resource_id="kbs_1")
+
+    worker = Worker(db, settings=get_settings(), knowledge_store=SimulatedKnowledgeStore())
     claimed = await jobs.claim(worker._owner, lease_seconds=60)  # noqa: SLF001
     assert claimed is not None
     await worker._run_job(claimed)  # noqa: SLF001
 
     doc = await db["jobs"].find_one({"_id": job.id})
-    assert doc is not None and doc["status"] == "dead_letter"
-    assert doc["last_error"] == "RuntimeError"
+    assert doc is not None and doc["status"] == "done"
+    source = await knowledge.get("kbs_1")
+    assert source is not None and source.indexing_status == "indexed"
+
+
+async def test_worker_deadletter_marks_indexing_failed(db: Database) -> None:
+    # A poll_indexing job that exhausts its budget (store keeps erroring) must dead-letter
+    # AND reconcile the source's status to 'failed' — not leave it stuck at 'pending'
+    # showing a perpetual "Indexing…" in the admin UI.
+    from app.domain.knowledge.repository import KnowledgeSourceRepository
+    from app.domain.knowledge.store import IndexingStatus, KnowledgeStoreError
+
+    class _StuckStore:
+        channel = "stuck"
+
+        async def upload(self, *, filename: str, content: bytes) -> str:
+            raise AssertionError("unused")
+
+        async def attach(self, file_id: str, *, attributes: dict[str, str]) -> IndexingStatus:
+            raise AssertionError("unused")
+
+        async def status(self, file_id: str) -> IndexingStatus:
+            raise KnowledgeStoreError("still_failing", retryable=True)
+
+        async def detach(self, file_id: str) -> None:
+            raise AssertionError("unused")
+
+    knowledge = KnowledgeSourceRepository(db["knowledge_sources"])
+    await knowledge.record_source(
+        source_id="kbs_dl",
+        openai_file_id="file_dl",
+        vector_store_id="vs",
+        title="Doc",
+        category="general",
+        approved=True,
+        lifecycle="active",
+        indexing_status="pending",
+    )
+    jobs = JobRepository(db["jobs"])
+    job = await jobs.enqueue("poll_indexing", resource_id="kbs_dl", max_attempts=1)
+
+    worker = Worker(db, settings=get_settings(), knowledge_store=_StuckStore())  # type: ignore[arg-type]
+    claimed = await jobs.claim(worker._owner, lease_seconds=60)  # noqa: SLF001
+    assert claimed is not None
+    await worker._run_job(claimed)  # noqa: SLF001
+
+    job_doc = await db["jobs"].find_one({"_id": job.id})
+    assert job_doc is not None and job_doc["status"] == "dead_letter"
+    source = await knowledge.get("kbs_dl")
+    assert source is not None and source.indexing_status == "failed"

@@ -16,6 +16,7 @@ from app.domain.conversations.repository import (
 from app.domain.feedback.repository import FeedbackRepository
 from app.domain.jobs.repository import JobRepository
 from app.domain.knowledge.repository import KnowledgeSourceRepository
+from app.domain.knowledge.store import KnowledgeStore, KnowledgeStoreError
 from app.domain.privacy.repository import PrivacyRequestRepository
 from app.domain.requests.repository import RequestRepository
 
@@ -186,6 +187,33 @@ async def run_privacy_reconcile(
         await jobs.enqueue("privacy_delete", resource_id=pvr.id)
         reenqueued += 1
     return reenqueued
+
+
+async def run_poll_indexing(
+    knowledge: KnowledgeSourceRepository,
+    store: KnowledgeStore,
+    *,
+    source_id: str,
+) -> dict[str, str]:
+    """Poll a just-uploaded knowledge file's indexing status and record it. While it is
+    still ``pending`` the job RAISES (retryable) so the worker re-polls with backoff;
+    once ``indexed``/``failed`` it returns. Idempotent: a gone/terminal/inactive source
+    is a no-op."""
+    source = await knowledge.get(source_id)
+    if source is None or source.openai_file_id is None:
+        return {"status": "gone"}
+    if source.lifecycle != "active":
+        # Removed/replaced after approval: the file was DETACHED, so polling its
+        # status would 404 and dead-letter uselessly. Stop — there's nothing to poll.
+        return {"status": "inactive"}
+    if source.indexing_status in ("indexed", "failed"):
+        return {"status": source.indexing_status}
+    status = await store.status(source.openai_file_id)
+    await knowledge.update_indexing_status(source_id, status)
+    if status == "pending":
+        # Not done yet — retry the job (bounded by max_attempts) to re-poll.
+        raise KnowledgeStoreError("still_indexing", retryable=True)
+    return {"status": status}
 
 
 async def run_reconcile_deliveries(
