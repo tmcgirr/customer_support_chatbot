@@ -12,4 +12,4 @@ Requesting a call opens a short form that sends your request to the right team. 
 
 Before anything is sent, you can review your details and confirm. After you submit, you receive a reference for the request.
 
-You can ask to speak with a person at any point in the conversation.
+You can ask to speak with a person at any point in the conversation. Cadre is based in San Diego and can also be reached through the contact page at cadreai.com.

@@ -6,7 +6,7 @@ audience: public
 
 # AI Agents
 
-AI Agents are systems that perform defined tasks, use tools, and support business workflows with appropriate controls and oversight.
+AI Agents are autonomous systems that perform defined tasks, use tools, and support business workflows with appropriate controls and oversight — handling repeatable, multi-step work.
 
 Rather than a single chatbot, an agent is built to carry out repeatable work: it can take defined actions, use tools and systems, and move a workflow forward. Cadre builds agents with the controls and human oversight appropriate to the task, so automation stays reliable and accountable.
 

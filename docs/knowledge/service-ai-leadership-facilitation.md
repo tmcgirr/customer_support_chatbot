@@ -6,7 +6,7 @@ audience: public
 
 # AI Leadership & Facilitation
 
-AI Leadership & Facilitation helps align leadership teams around AI priorities, operating models, governance, and adoption.
+AI Leadership & Facilitation helps align leadership teams around AI priorities, operating models, governance, and adoption — turning a team into AI champions.
 
 Successful AI adoption depends on more than technology. This service focuses on getting decision-makers aligned on where AI matters most, how the organization will operate and govern its use of AI, and how to drive adoption so investments actually change how teams work.
 

@@ -60,9 +60,11 @@ async def test_get_canonical_answer_returns_content_and_actions(
     assert match.canonical_answer_id is not None
     assert match.canonical_answer_id.startswith("can_")
     assert match.content is not None
-    assert "approved fixed price" in match.content
-    # Prohibited claims must never appear in the pricing answer (§7, golden set).
-    assert "$" not in match.content
+    assert "scoped to the business problem" in match.content
+    # Published pricing framing is allowed (invariant #8: served via canonical, not
+    # generated); a fabricated fixed consulting fee / hourly rate is not (§7).
+    assert "per hour" not in match.content.lower()
+    assert "hourly rate" not in match.content.lower()
     assert match.allowed_action_ids == ["strategy_call"]
 
 

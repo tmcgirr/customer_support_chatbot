@@ -13,7 +13,7 @@ is a separate, reviewed code change (see [The change workflow](#the-change-workf
 
 ## 1. What the benchmark is
 
-The benchmark is a **golden set** — `backend/eval/golden_set.yaml`, 35 fixed cases. Each case is
+The benchmark is a **golden set** — `backend/eval/golden_set.yaml`, 37 fixed cases. Each case is
 a short scripted conversation plus the behaviour we require:
 
 ```yaml
@@ -55,7 +55,7 @@ docker compose up -d mongo        # the eval needs MongoDB (canonical answers + 
 # For a REAL run, OPENAI_API_KEY must be set (it's in backend/.env for dev).
 ```
 
-A **real run spends OpenAI $** (one model turn per case, ~35 calls per config). To rehearse the
+A **real run spends OpenAI $** (one model turn per case, ~37 calls per config). To rehearse the
 flow for free, add `--fake` (a plumbing adapter answers instead of the model — every case will
 "fail" routing, which is expected; it only proves the harness runs).
 

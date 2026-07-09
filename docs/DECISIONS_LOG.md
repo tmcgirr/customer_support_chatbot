@@ -686,6 +686,48 @@ Choices made during implementation that the planning docs did not fully specify
 - **Verified:** 358 backend tests (scoring/ranking, report rendering + HTML-escaping, config load,
   run_config plumbing smoke) + a live CLI smoke that produced a valid HTML report. ruff + mypy clean.
 
+## Content refresh — align to live cadreai.com + relax sensitive-topic policy (2026-07-09)
+
+- **Live-site scrape → content update.** Scraped the current public site (cadreai.com) and diffed
+  it against the 12 knowledge docs + 11 canonical answers, which were first-draft POC placeholders.
+  Updated both stores plus `sys-v1.md`, `docs/05 §3`, and the golden set. The site had moved past the
+  placeholders: San Diego HQ, official OpenAI service partner, 100+ use cases across 50+ companies,
+  the **eight-pillar framework** + **AI Transformation Intensive** + **AI Command Center**, added
+  industries (mortgage & lending, hospitality; retail & e-commerce; manufacturing & logistics), a
+  department library, an expanded provider list, and a public data-isolation ("not used to train
+  other models") claim. Two new knowledge files: `outcomes.md` (anonymized results) and
+  `departments.md`.
+- **Owner-approved policy relaxation (user decision, 2026-07-09): the bot may now use publicly
+  known strategy/pricing data, and may cite anonymized outcomes — but never names.** Concretely:
+  1. **Pricing** (canonical, still routed — invariant #8 holds): may state the published framing —
+     the AI Transformation Intensive as the structured entry, and that ongoing AI *tool* licenses
+     (ChatGPT/Copilot/Claude seats) run ~$30/employee/month. The $30 figure is the underlying
+     third-party seat cost from the site, NOT a Cadre consulting fee; the bot must never invent a
+     fixed consulting fee, hourly rate, or project total.
+  2. **AI Maturity Index:** may name the now-public eight-pillar framework, but never numeric
+     scoring (weights, ranges, scale, duration, price).
+  3. **Case studies:** may share anonymized, approved outcomes (hours saved, % improvements,
+     industry) — e.g. "a manufacturer cut proposal turnaround to ~20 minutes" — but must NEVER name
+     a client organization or any individual (including testimonial authors), and never confirm
+     whether a named org is a client.
+  4. **Data security:** may state the data-isolation / not-used-to-train assurance; certifications,
+     compliance, residency, and zero-retention guarantees still escalate.
+- **Golden gate retuned, not weakened.** Pricing cases keep `must_use_canonical: pricing` and drop
+  the blanket `"$"` ban (the approved answer now contains a price) while still banning fabricated
+  consulting/hourly quotes; AMI cases keep the numeric-scoring bans; case-study cases now allow
+  results and add name bans (`isupport`/`avanti`/`tzp`) + `must_not_confirm_client`; two new cases
+  (`cst_001` anonymized story allowed, `cst_002` refuse to name clients). Cert/SLA/residency/portal/
+  injection guards unchanged.
+- **Site URL fix.** Repo placeholders used `cadre.ai`; the real site is `cadreai.com`. Fixed
+  `PRIVACY_URL` → `https://www.cadreai.com/legal/privacy-policy`, plus CORS/PROD_DOMAIN/`gocadre`
+  examples across config, deploy env examples, and docs. **Open (Client Success):** there is no
+  public client-portal login page — `PORTAL_URL` is set to the domain-consistent placeholder
+  `https://portal.cadreai.com` and must be confirmed before launch.
+- **Open flags for final sign-off (per doc 05 §9 owners):** the "official OpenAI service partner"
+  credential (Marketing), the data-isolation wording (Security/Legal), and the exact ~$30 tool-
+  licensing figure (Sales/Leadership). Content is approved-in-dev; promotion to prod re-runs the
+  golden gate on the target store (invariant #14).
+
 ## V1.5 — Eval: PDF report + tester user guide (2026-07-09)
 
 - **PDF output** (`--pdf out.pdf`): `eval/pdf.py` renders a downloadable, shareable PDF (ranking +

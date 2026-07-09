@@ -3,9 +3,10 @@
 Idempotent: keyed by intent, so re-running updates records in place rather than
 creating duplicates. Every record is stored ``approved`` so
 ``get_canonical_answer`` can serve it (CLAUDE.md invariant #8). Wording is
-verbatim from docs/05_Conversation_and_Content_Specification.md §3 — never
-invent prices, client names, certifications, or AI Maturity methodology
-(§7 prohibited claims).
+verbatim from docs/05_Conversation_and_Content_Specification.md §3. Published,
+approved facts (pricing framing, the eight-pillar framework, anonymized outcomes)
+may be stated; never invent specific client or individual names, certifications,
+compliance/residency claims, SLAs, or timelines (§7 prohibited claims).
 
     uv run python scripts/seed_canonical.py
 """
@@ -40,10 +41,12 @@ SEED_ANSWERS: list[dict[str, Any]] = [
         "intent": "company_overview",
         "owner": "Marketing, service owners",
         "content": (
-            "Cadre AI is an AI strategy and implementation consultancy. We help "
+            "Cadre AI is a San Diego–based AI strategy and implementation "
+            "consultancy and an official OpenAI service partner. We help "
             "businesses move from AI confusion to AI confidence — going department "
             "by department to identify high-ROI AI opportunities, build practical "
-            "workflows and agents, and train teams so the changes actually stick.\n\n"
+            "workflows and agents, and train teams so the changes actually stick. "
+            "Cadre has delivered 100+ high-ROI use cases across 50+ companies.\n\n"
             "Cadre's core services are AI Strategy, AI Leadership & Facilitation, "
             "AI Engineering, and AI Agents."
         ),
@@ -73,8 +76,9 @@ SEED_ANSWERS: list[dict[str, Any]] = [
         "owner": "Marketing, service owners",
         "content": (
             "Cadre works with B2B organizations including professional services, "
-            "private equity and PE-backed companies, financial services, real "
-            "estate, construction, manufacturing, and retail.\n\n"
+            "private equity and PE-backed companies, financial services, mortgage "
+            "and lending, real estate, construction, manufacturing and logistics, "
+            "retail and e-commerce, and hospitality.\n\n"
             "The best fit depends less on the industry label and more on the "
             "workflows, decisions, and operational problems you want to improve."
         ),
@@ -89,6 +93,11 @@ SEED_ANSWERS: list[dict[str, Any]] = [
             "The AI Maturity Index is Cadre's assessment of how prepared an "
             "organization is to adopt and scale AI effectively. It helps leaders "
             "understand current capabilities, gaps, and likely priorities.\n\n"
+            "It grades a company across Cadre's eight-pillar framework for AI "
+            "transformation — covering areas such as a dedicated AI team, an AI "
+            "Command Center, an AI-first culture, the tech stack, data health, AI "
+            "agent readiness, departmental deep dives, and a three-year AI vision — "
+            "and returns actionable insights on where to improve.\n\n"
             "To receive a score, you can request an assessment or speak with a "
             "Cadre strategist about the process."
         ),
@@ -104,11 +113,12 @@ SEED_ANSWERS: list[dict[str, Any]] = [
             "the use case, answer quality, latency, cost, context requirements, "
             "integration needs, deployment constraints, and data-handling "
             "requirements.\n\n"
-            "Cadre works across providers and platforms including OpenAI, "
-            "Anthropic (Claude), Google, Microsoft, AWS, Salesforce, and Snowflake, "
-            "and uses OpenRouter for flexible model access. A final recommendation "
-            "normally requires understanding your workflow and security "
-            "requirements."
+            "Cadre is an official OpenAI service partner and works across providers "
+            "and platforms including OpenAI, Anthropic (Claude), Google (Gemini), "
+            "Microsoft (Copilot), Mistral, Meta, AWS, Salesforce, and Snowflake, and "
+            "uses OpenRouter for flexible access to additional models. A final "
+            "recommendation normally requires understanding your workflow and "
+            "security requirements."
         ),
         "allowed_action_ids": ["strategy_call"],
         "mandatory_escalation": False,
@@ -121,7 +131,10 @@ SEED_ANSWERS: list[dict[str, Any]] = [
             "Cadre evaluates data security as part of the design of each AI "
             "solution: what information is sent to a model, who can access the "
             "system, provider data-handling terms, retention, logging, encryption, "
-            "and deployment requirements.\n\n"
+            "and deployment requirements. A core principle is keeping client data "
+            "isolated — solutions are designed so your data is not used to train "
+            "other providers' models, and so employees aren't putting company "
+            "information into unmanaged personal AI tools.\n\n"
             "The correct approach depends on your systems, data sensitivity, and "
             "regulatory obligations. For a security review or organization-specific "
             "requirements, I can connect you with the appropriate Cadre team."
@@ -138,9 +151,14 @@ SEED_ANSWERS: list[dict[str, Any]] = [
         "content": (
             "Cadre engagements are scoped to the business problem: number of "
             "workflows, systems involved, data requirements, implementation "
-            "complexity, and level of organizational support required.\n\n"
-            "I don't have an approved fixed price for that, but I can help you "
-            "request a conversation with a strategist."
+            "complexity, and level of organizational support required, so there "
+            "isn't a single fixed consulting price.\n\n"
+            "Many engagements start with the AI Transformation Intensive, a "
+            "structured program that produces a prioritized roadmap. Ongoing AI "
+            "tool licenses — the underlying platforms such as ChatGPT, Copilot, or "
+            "Claude — typically run around $30 per employee per month. For a scope "
+            "and estimate tailored to your situation, I can help you request a "
+            "conversation with a strategist."
         ),
         "allowed_action_ids": ["strategy_call"],
         "mandatory_escalation": False,
@@ -150,8 +168,13 @@ SEED_ANSWERS: list[dict[str, Any]] = [
         "intent": "case_study",
         "owner": "Marketing/Client owner",
         "content": (
-            "I can't share specific client names or results in this chat. Cadre "
-            "can walk through relevant, approved examples for your industry on a "
+            "I don't share specific client names or the names of individuals in "
+            "this chat, but I can share anonymized, approved outcomes. For example, "
+            "a manufacturer cut proposal turnaround from one to two days down to "
+            "about 20 minutes, and a mortgage lender reduced loan-review time to "
+            "under 15 minutes. Results depend on the specific workflows, systems, "
+            "and data involved.\n\n"
+            "Cadre can walk through relevant examples for your industry on a "
             "strategy call."
         ),
         "allowed_action_ids": ["strategy_call"],
