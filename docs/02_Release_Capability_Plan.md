@@ -103,7 +103,12 @@ Staging and production environments; load balancer with SSE validated; multiple 
 
 # 5. V1.5 Capability Set
 
-Semantic topic clustering; intent/topic labeling (async, not in the request path); conversation summaries; knowledge-gap ranking; expanded evaluation console; AI Maturity mini-assessment; funnel analytics; dataset-candidate workflow with PII redaction and reviewer approval; automated content-review reminders; internal response suggestions. None of these change the public trust model.
+Semantic topic clustering; intent/topic labeling (async, not in the request path); conversation summaries; knowledge-gap ranking; a standalone developer evaluation tool (config/model/prompt A-B scoring + ranking, outside the app); funnel analytics; dataset-candidate workflow with PII redaction and reviewer approval; automated content-review reminders; internal response suggestions. None of these change the public trust model.
+
+> **Out of scope (removed 2026-07-09):** an in-chatbot *AI Maturity mini-assessment* — the AI
+> Maturity Index is a service the business delivers itself, not a chatbot capability. The bot only
+> **defers** to it via the approved `ai_maturity_index` canonical answer (and never improvises the
+> methodology); it does not administer an assessment.
 
 ---
 

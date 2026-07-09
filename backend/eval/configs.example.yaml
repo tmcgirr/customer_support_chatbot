@@ -1,0 +1,19 @@
+# Named configs the evaluation tool A-Bs — each is scored on the golden set (performance +
+# routing) and the report ranks them. Copy to eval/configs.yaml and edit.
+#
+#   uv run python -m eval.run --compare eval/configs.example.yaml --report eval/report.html
+#
+# Vary any of: model, fallback_model, prompt_version (drop a new sys-vN.md in
+# app/agent/prompts/ to A-B a rebuilt system message / routing instructions).
+
+- name: baseline
+  model: gpt-5.4-mini
+  prompt_version: sys-v1
+
+- name: bigger-model
+  model: gpt-5.4
+  prompt_version: sys-v1
+
+- name: new-prompt
+  model: gpt-5.4-mini
+  prompt_version: sys-v1   # ← point at a new sys-v2.md once you've drafted one

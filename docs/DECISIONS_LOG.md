@@ -667,3 +667,21 @@ Choices made during implementation that the planning docs did not fully specify
   invariant #12), exposing raw PII even to the viewer role. Now the tldr + every key_point run
   through `mask_pii_in_text` in both endpoints (unmasked stays gated behind the audited reveal).
 - **Verified:** 345 backend (incl. summary-masking) + 49 frontend tests.
+
+## V1.5 — Standalone developer evaluation tool (2026-07-09)
+
+- **What / why:** the evaluation surface is a DEVELOPER/TEST-ENGINEER tool, deliberately OUTSIDE the
+  chatbot and the admin portal (it evaluates the bot's performance + routing on the known golden
+  path when rebuilding system messages / routing / trying new LLMs). It is NOT an admin-portal
+  feature. Extends the existing `python -m eval.run` gate rather than adding a new surface.
+- **Shape:** an `EvalConfig` (name, model, fallback_model, prompt_version); `run_config()` drives the
+  golden set through the REAL orchestrator + tools and returns a scored `RunResult` (per-case
+  pass/fail, routed intent, actions, latency). CLI adds `--compare configs.yaml` (A-B many configs
+  → ranked), `--report out.html` (self-contained HTML: ranking + case×config DIFF matrix + per-case
+  routing), `--json out.json`, and `--model` / `--prompt-version` one-off overrides. The plain
+  `python -m eval.run` stays the CI gate (exits non-zero); `--compare` is exploratory (exit 0).
+- **AI Maturity mini-assessment REMOVED from the roadmap** (doc 02 §5, plan.md): the AI Maturity
+  Index is the business's own service, not a chatbot capability. The bot only DEFERS to it via the
+  approved `ai_maturity_index` canonical answer (unchanged) — it never administers an assessment.
+- **Verified:** 358 backend tests (scoring/ranking, report rendering + HTML-escaping, config load,
+  run_config plumbing smoke) + a live CLI smoke that produced a valid HTML report. ruff + mypy clean.

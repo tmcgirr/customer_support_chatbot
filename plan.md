@@ -253,11 +253,16 @@ Commit: `chore: V1 production deployment and public gate`
 ## Backlog (V1.5 / V2+ — do NOT build during V1)
 
 V1.5: semantic topic clustering, async intent/topic labeling, conversation summaries,
-knowledge-gap ranking, evaluation console + **golden-run result history** + dataset curation
-(with PII redaction) — contracts §7 places eval result history at V1.5, resolving the doc 06
-E05 wording; AI Maturity mini-assessment, funnel analytics. V2+: authenticated clients, tenancy/roles, tenant-scoped
-retention, private Vector Stores, client tools with per-call authz, human takeover
-(WebSockets), regional controls. See `docs/02_Release_Capability_Plan.md` §5–6.
+knowledge-gap ranking, a **standalone developer evaluation tool** (golden-set scoring +
+config/model/prompt A-B ranking + report, run OUTSIDE the app — never in the request path or
+admin portal) + dataset curation (with PII redaction), funnel analytics. V2+: authenticated
+clients, tenancy/roles, tenant-scoped retention, private Vector Stores, client tools with
+per-call authz, human takeover (WebSockets), regional controls.
+See `docs/02_Release_Capability_Plan.md` §5–6.
+
+> **Removed from the roadmap (2026-07-09):** the in-chatbot *AI Maturity mini-assessment*. The
+> AI Maturity Index is the business's own service — the bot only defers to it via the approved
+> `ai_maturity_index` canonical answer, it never administers an assessment.
 
 ---
 
