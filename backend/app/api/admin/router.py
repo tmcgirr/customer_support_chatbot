@@ -22,6 +22,7 @@ from app.api.deps import (
 from app.core.config import get_settings
 from app.core.errors import AppError, ErrorCode
 from app.core.masking import mask_email, mask_pii_in_text
+from app.domain.monitoring.alerts import evaluate_alerts
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
@@ -188,6 +189,14 @@ class MeResponse(BaseModel):
     role: str
 
 
+class AlertEntry(BaseModel):
+    name: str
+    severity: str
+    count: int
+    threshold: int
+    message: str
+
+
 class MonitoringResponse(BaseModel):
     """Machine-scrapable operational signals (admin-gated, no PII) — the source for
     the V1 alerts: queue depth, dead-letter, delivery failures, stuck erasures."""
@@ -200,6 +209,8 @@ class MonitoringResponse(BaseModel):
     privacy_by_status: dict[str, int]
     privacy_failed: int  # verified erasures that couldn't complete (ALERT if > 0)
     unresolved_questions: int
+    # Currently-firing alerts (same evaluation the worker logs) — empty when healthy.
+    alerts: list[AlertEntry]
 
 
 @router.get("/me", response_model=MeResponse)
@@ -221,6 +232,12 @@ async def monitoring(
     job_counts = await jobs.counts()
     request_counts = await request_repo.count_by("status")
     privacy_counts = await privacy.counts_by_status()
+    alerts = evaluate_alerts(
+        job_counts=job_counts,
+        request_counts=request_counts,
+        privacy_counts=privacy_counts,
+        queue_depth_threshold=get_settings().alert_queue_depth_threshold,
+    )
     return MonitoringResponse(
         jobs_by_status=job_counts,
         queue_depth=job_counts.get("pending", 0),
@@ -230,6 +247,16 @@ async def monitoring(
         privacy_by_status=privacy_counts,
         privacy_failed=privacy_counts.get("failed", 0),
         unresolved_questions=await repo.count_unsupported(),
+        alerts=[
+            AlertEntry(
+                name=a.name,
+                severity=a.severity,
+                count=a.count,
+                threshold=a.threshold,
+                message=a.message,
+            )
+            for a in alerts
+        ],
     )
 
 

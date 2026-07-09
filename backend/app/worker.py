@@ -42,6 +42,7 @@ from app.domain.jobs.tasks import (
     run_stale_lock_sweep,
 )
 from app.domain.knowledge.repository import KnowledgeSourceRepository
+from app.domain.monitoring.alerts import evaluate_alerts
 from app.domain.privacy.repository import PrivacyRequestRepository
 from app.domain.requests.repository import RequestRepository
 
@@ -140,8 +141,31 @@ class Worker:
         if now - self._last_monitor < _MONITOR_SECONDS:
             return
         self._last_monitor = now
-        counts = await self._jobs.counts()
-        logger.info("worker.queue", extra={"context": {"counts": counts}})
+        job_counts = await self._jobs.counts()
+        request_counts = await self._requests.count_by("status")
+        privacy_counts = await self._privacy.counts_by_status()
+        logger.info("worker.queue", extra={"context": {"counts": job_counts}})
+        # Emit a pageable ALERT log per firing threshold (a log-based pager alerts on
+        # level>=ERROR or on the "worker.alert" event). Static message, counts-only context.
+        alerts = evaluate_alerts(
+            job_counts=job_counts,
+            request_counts=request_counts,
+            privacy_counts=privacy_counts,
+            queue_depth_threshold=self._settings.alert_queue_depth_threshold,
+        )
+        for alert in alerts:
+            emit = logger.error if alert.severity == "critical" else logger.warning
+            emit(
+                "worker.alert",
+                extra={
+                    "context": {
+                        "alert": alert.name,
+                        "severity": alert.severity,
+                        "count": alert.count,
+                        "threshold": alert.threshold,
+                    }
+                },
+            )
 
     async def _run_job(self, job: Job) -> None:
         assert job.lock_owner is not None  # set by claim()

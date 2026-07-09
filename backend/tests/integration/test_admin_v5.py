@@ -230,6 +230,16 @@ async def test_monitoring_reports_operational_counts(
     assert body["delivery_failed"] == 1
     assert body["dead_letter"] == 1
     assert "queue_depth" in body and "privacy_by_status" in body
+    # Both critical conditions surface as firing alerts.
+    fired = {a["name"]: a for a in body["alerts"]}
+    assert set(fired) == {"dead_letter_jobs", "delivery_failed_requests"}
+    assert all(a["severity"] == "critical" for a in fired.values())
+
+
+async def test_monitoring_no_alerts_when_healthy(client: httpx.AsyncClient) -> None:
+    resp = await client.get("/api/v1/admin/monitoring", auth=ADMIN_AUTH)
+    assert resp.status_code == 200
+    assert resp.json()["alerts"] == []  # clean baseline
 
 
 async def test_monitoring_readable_by_viewer(client: httpx.AsyncClient) -> None:

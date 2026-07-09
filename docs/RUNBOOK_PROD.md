@@ -6,15 +6,19 @@ incident response. Deploy mechanics are in [`DEPLOY_PROD.md`](DEPLOY_PROD.md).
 ## Monitoring & alerts
 
 Scrape `GET /api/v1/admin/monitoring` (admin Basic auth) on an interval — it returns
-IDs-only counters (no PII). Structured worker logs (`worker.queue`, `worker.job.*`) also
-carry queue depth and per-job status. Recommended alerts:
+IDs-only counters (no PII). **The worker evaluates the same thresholds every ~60s and emits
+a pageable `worker.alert` log (ERROR for critical, WARNING for degraded) per firing
+condition**, and `/monitoring` returns the same firing alerts in its `alerts` array — so
+wiring a pager is one rule: **alert on the `worker.alert` event (or log `level >= ERROR`)**,
+no threshold logic in the pager. Structured logs (`worker.queue`, `worker.job.*`) also carry
+queue depth + per-job status. The conditions:
 
-| Signal | Source | Threshold | Why |
+| Signal | `worker.alert` name / source | Threshold | Why |
 |---|---|---|---|
-| `dead_letter` | /monitoring | **> 0 → page** | A job exhausted its retries — delivery/erasure needs a human. |
-| `delivery_failed` | /monitoring | **> 0 → page** | Parked request(s) awaiting admin redeliver (external system down). |
-| `privacy_failed` | /monitoring | **> 0 → page** | A verified erasure could not complete — legal-sensitive. |
-| `queue_depth` | /monitoring | sustained **> 100 → warn** | Worker not draining (crashed / overloaded). |
+| `dead_letter` | `dead_letter_jobs` (critical) | **> 0 → page** | A job exhausted its retries — delivery/erasure needs a human. |
+| `delivery_failed` | `delivery_failed_requests` (critical) | **> 0 → page** | Parked request(s) awaiting admin redeliver (external system down). |
+| `privacy_failed` | `privacy_erasures_failed` (critical) | **> 0 → page** | A verified erasure could not complete — legal-sensitive. |
+| `queue_depth` | `job_queue_backlog` (warning) | sustained **> `alert_queue_depth_threshold` (100)** | Worker not draining (crashed / overloaded). |
 | HTTP 5xx rate | proxy/app logs | **> 1% over 5 min → warn** | API or model degradation. |
 | p95 turn latency | `chat.turn.completed` log `latency_ms` | **> 15 s → warn** | Model slow / retrieval slow. |
 | `/healthz` | LB health check | non-200 → replica out of rotation | Caddy already health-gates upstreams. |

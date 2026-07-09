@@ -113,6 +113,9 @@ class Settings(BaseSettings):
     # A request still received/delivering this long after creation is reconciled by
     # the delivery sweep (its job crashed/timed-out, or its enqueue was lost).
     delivery_stuck_seconds: int = 900
+    # Pending-job count above which the worker fires a queue-backlog WARNING alert
+    # (dead-letter / delivery-failed / privacy-failed alerts fire on any > 0).
+    alert_queue_depth_threshold: int = 100
 
     # --- Request delivery transport (pluggable; V1.5). 'simulated' (default) is a
     # functional MOCK: it records what WOULD be sent (visible in admin), needs no creds,

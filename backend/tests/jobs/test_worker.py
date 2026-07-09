@@ -1,7 +1,10 @@
 """Worker tests: a claimed job runs through dispatch to done; a handler failure
 retries/dead-letters. Uses the real Worker against a test MongoDB."""
 
+import logging
 from datetime import UTC, datetime, timedelta
+
+import pytest
 
 from app.core.config import get_settings
 from app.domain.conversations.repository import ConversationRepository
@@ -12,6 +15,28 @@ from tests.jobs.conftest import Database
 
 def _worker(db: Database) -> Worker:
     return Worker(db, settings=get_settings())
+
+
+async def test_monitor_emits_critical_alert_for_dead_letter(
+    db: Database, caplog: pytest.LogCaptureFixture
+) -> None:
+    await db["jobs"].insert_one(
+        {
+            "_id": "j_dl",
+            "type": "deliver_request",
+            "status": "dead_letter",
+            "attempts": 5,
+            "max_attempts": 5,
+            "available_at": datetime.now(UTC),
+            "created_at": datetime.now(UTC),
+        }
+    )
+    worker = _worker(db)
+    with caplog.at_level(logging.ERROR):
+        await worker._monitor()
+    alerts = [r for r in caplog.records if r.getMessage() == "worker.alert"]
+    assert alerts, "expected a worker.alert log for the dead-lettered job"
+    assert getattr(alerts[0], "context", {}).get("alert") == "dead_letter_jobs"
 
 
 async def test_worker_runs_a_scheduled_job_to_done(db: Database) -> None:
