@@ -490,12 +490,12 @@ describe("AdminApp", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Usage & cost" }));
 
-    // Total spend + per-provider card with the masked API key tail and active badge.
-    expect(await screen.findByText("LLM spend — last 30 days")).toBeInTheDocument();
-    expect(screen.getByText("API key: ••••WxYz")).toBeInTheDocument();
+    // KPI row (Total cost) + per-provider card with the masked API key tail.
+    expect(await screen.findByText("Total cost")).toBeInTheDocument();
+    expect(screen.getByText("••••WxYz")).toBeInTheDocument();
     expect(screen.getByText(/Month-to-date:/)).toBeInTheDocument();
-    // Unpriced OpenAI model is surfaced, not hidden.
-    expect(screen.getByText(/unpriced model/)).toBeInTheDocument();
+    // Unpriced OpenAI model is surfaced, not hidden (the count notice, not the page intro).
+    expect(screen.getByText(/1 unpriced model/)).toBeInTheDocument();
   });
 
   it("shows the Knowledge upload form and lets an admin approve a source", async () => {

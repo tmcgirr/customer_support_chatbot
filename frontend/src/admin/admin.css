@@ -865,6 +865,54 @@ table {
   max-width: 520px;
 }
 
+/* Budget / usage progress bar (token-themed, uses design tokens) */
+.admin-progress {
+  height: 10px;
+  background: var(--admin-track);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.admin-progress-bar {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--admin-accent);
+  transition: width 0.2s ease;
+}
+
+.admin-progress-bar[data-over="true"] {
+  background: var(--admin-crit);
+}
+
+/* Key/value list (provider cards) */
+.admin-kv {
+  margin: 10px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.admin-kv-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.admin-kv-row dt {
+  color: var(--admin-text-subtle);
+  flex: 0 0 auto;
+}
+
+.admin-kv-row dd {
+  margin: 0;
+  text-align: right;
+  color: var(--admin-text);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
 /* Rendered Markdown (insight summaries, proposed answers) */
 .admin-md {
   font-size: 13.5px;
