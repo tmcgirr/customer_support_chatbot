@@ -24,10 +24,11 @@ Beyond the planning package, `docs/` now holds the shipped-system and operationa
 
 - **Capabilities** — [`capabilities/`](capabilities/) — one doc per feature (what / why / status / future). **Start here for the built system.**
 - **Architecture (C4)** — [`architecture/`](architecture/) — system context → containers → components, the 13-collection data model, runtime data flows, and cross-cutting/trust-boundary concerns (Mermaid diagrams).
-- **Operations** — [DEPLOY_STAGING](DEPLOY_STAGING.md) · [DEPLOY_PROD](DEPLOY_PROD.md) · [RUNBOOK_PROD](RUNBOOK_PROD.md) · [RUNBOOK_POC](RUNBOOK_POC.md) (historical).
+- **Operations** — [DEPLOY_STAGING](DEPLOY_STAGING.md) · [DEPLOY_PROD](DEPLOY_PROD.md) · [RUNBOOK_PROD](RUNBOOK_PROD.md) · [RUNBOOK_POC](RUNBOOK_POC.md) (historical) · [PRODUCTION_READINESS](PRODUCTION_READINESS.md) (hardening / scale / durability plan beyond the launch gate).
 - **Compliance** — [PRIVACY_NOTICE](PRIVACY_NOTICE.md) (DRAFT, pending Legal) · [SECURITY_REVIEW_V1](SECURITY_REVIEW_V1.md).
 - **Quality** — [EVAL_TESTER_GUIDE](EVAL_TESTER_GUIDE.md) (the golden-set gate + dev tool).
 - **History & decisions** — [V1_EXIT_REPORT](V1_EXIT_REPORT.md) · [POC_EXIT_REPORT](POC_EXIT_REPORT.md) · [DECISIONS_LOG](DECISIONS_LOG.md) · [archive/](archive/).
+- **Forward direction (V2)** — [07_V2_Authenticated_Capability_Plan](07_V2_Authenticated_Capability_Plan.md) — the authenticated build, the agent-runtime migration decision, and the analytics/attribution direction (formalized as ADR-020 and ADR-021 in doc 03).
 - **Content corpus** — [knowledge/](knowledge/) — the approved markdown pushed to the Vector Store.
 
 ## Summary of major changes from Revision 2

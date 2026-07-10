@@ -85,6 +85,8 @@ Staging + production environments; load balancer with SSE re-verified; multiple 
 
 Client authentication, tenancy, roles; tenant-aware repositories and a separate messages collection for uncapped threads; private Vector Stores selected by the application; client tools with per-call validation; human takeover with WebSockets; regional retention. V2+ remains a separate trust tier. (Provider-neutral history: already satisfied by ADR-014.)
 
+The authenticated capability set and phased rollout (Phases 0–4) are specified in `docs/07_V2_Authenticated_Capability_Plan.md`; the durable decisions are **ADR-020** (agent runtime) and **ADR-021** (authenticated trust tier) in doc 03.
+
 ---
 
 # 3. Milestones

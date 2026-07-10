@@ -832,3 +832,38 @@ Choices made during implementation that the planning docs did not fully specify
   the two month-to-date aggregations are skipped when no budget is set, keeping the scrape cheap.
 - **Coexists with the parallel OpenRouter work** — the panel treats openrouter as a third provider,
   attributes its `vendor/model` usage correctly, and its rates are override-configurable.
+
+## V2 & production direction — planning docs (2026-07-10)
+
+- **Why:** a review of the delivered POC/V1 asked how the agent actually works, why not the OpenAI
+  Agents SDK / LangChain, and where the platform goes next. The reasoning and forward direction were
+  captured as durable docs rather than left in conversation. **Planning/direction only — no code changed.**
+- **ADR-020 (Accepted) — direct agent loop over a framework.** Records the durable reasoning already
+  implicit in ADR-003→ADR-014: a framework bundles a tool loop + a history store + provider-native
+  conveniences; only the loop was wanted (~40 lines), and the other two fight invariant #1 (Mongo is the
+  single source of truth — an SDK session store re-creates the deleted dual store) and #4 (runtime
+  provider isolation). Names the revisit triggers (model in the write path / multi-agent workflows →
+  Agents SDK if OpenAI-committed + handoff-heavy, LangGraph if durable/branching; MCP is orthogonal
+  transport). Framework capabilities cited as of early 2026 — re-verify before committing.
+- **ADR-021 (Proposed, V2) — authenticated trust tier.** Amends invariant #2 (read-only model) for
+  authenticated users only: two trust tiers, capability-scoped tools resolved from the session,
+  authorization from the session (never model args), high-stakes actions still confirmed, private stores
+  application-selected per tenant, history still Mongo (tenant-scoped, ADR-015). Public tier unchanged.
+  Promote to Accepted only via the doc 02 §8 V2 design gate.
+- **`docs/07_V2_Authenticated_Capability_Plan.md` (new).** The forward design the scattered doc 02 §6 /
+  doc 06 E12 bullets lacked: identity via portal SSO, the capability map by risk (private reads →
+  prepared actions → direct actions), human takeover, best-practice guardrails, and a phased Phase 0–4
+  rollout (the trust boundary moves once, at the end). Cross-referenced from doc 01 §3.3 / 02 §6 / 06 §14.
+- **Attribution features (doc 07 §13, direction only).** Two measurement enhancements, nearer-term than
+  the authenticated tier and cheap to run (runtime LLM cost ≈ 0): close-loop attribution
+  (conversation → signed contract via a worker CRM deal-stage read-back on the existing external
+  reference, plus style/path features folded into the existing per-conversation `classify`) and
+  cross-channel attribution (chat ↔ site-form via a shared first-party, consented visitor id). Honest
+  caveat recorded: at consultancy deal volumes (dozens/yr) automated style→close correlation is weak —
+  lead with qualitative review of the transcripts that closed.
+- **`docs/PRODUCTION_READINESS.md` (new).** Assessment + forward plan separating gate-ready from running:
+  the two hard gates (edge WAF/CDN, production IdP), concurrency (the missing per-instance stream ceiling),
+  MongoDB/analytics at scale, provider resilience (SDK auto-retry + fallback + a strong outage degraded
+  mode; gaps = proactive rate-budgeting + a spend brake vs. the alert-only budget), and a 3-month →
+  3-year maintenance horizon (model deprecation, the pending motor→PyMongo-Async migration, ownership).
+  Cross-referenced from V1_EXIT_REPORT and both README indexes.

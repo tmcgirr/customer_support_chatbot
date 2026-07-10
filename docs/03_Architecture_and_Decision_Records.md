@@ -149,7 +149,7 @@ Scaling sequence when needed: indexes → production cluster → worker → more
 
 # 8. Architecture Decision Records
 
-Statuses: Accepted, Superseded. Superseded ADRs are retained below with links.
+Statuses: Accepted, Superseded, Proposed. Superseded ADRs are retained below with links; Proposed ADRs record a forward (V2) decision that is not yet in build.
 
 ## ADR-001: Modular monolith — **Accepted (unchanged)**
 One FastAPI codebase with typed internal module boundaries. POC: one deployable. V1: API and worker as separate processes from the same codebase. Extract services only for independent scaling, isolation, or ownership.
@@ -224,6 +224,68 @@ Because history is app-owned and one agent with three read-only tools needs only
 **Decision.** Strategy-call, portal-support, and escalation share one `requests` collection (type discriminator) and one submit endpoint. Submission succeeds when the record is persisted locally with a reference. External delivery (CRM/ticketing/notifications, V1) is a background job: idempotent per request, bounded retries, dead-letter status, admin failure view, ambiguity resolved by querying the external system for the request's external reference — never by user-facing retries after local persistence.
 
 **Consequences.** User success is decoupled from third-party availability; delivery ambiguity is contained to one job; three near-identical schemas and endpoints collapse into one.
+
+## ADR-020: Direct agent loop over an agent framework; framework revisited at V2 — **Accepted (new; expands ADR-003)**
+
+**Context.** The "agent" is a hand-written, bounded, read-only tool loop (~40 lines in
+`orchestrator.py`): the model is offered three read-only tools, the app executes any tool call it emits
+and resends the transcript each round (stateless), up to `_MAX_TOOL_ROUNDS`. Agent frameworks exist —
+the **OpenAI Agents SDK**, **LangChain**, **LangGraph** — and the question recurs: why not use one?
+ADR-003 originally *adopted* the Agents SDK; ADR-014 dropped it when MongoDB became the single store.
+This ADR records the durable reasoning and the conditions under which a framework returns.
+
+**Decision.** Keep the direct loop for the current scope. A framework bundles three things — a tool
+loop, a conversation-history store, and provider-native conveniences/tracing. This project wanted only
+the first; the second conflicts with **invariant #1** (MongoDB is the single source of truth — an SDK
+session store re-creates the dual-store design ADR-014 deleted) and the third conflicts with **invariant
+#4** (runtime-swappable, isolated providers). At three read-only tools the loop is ~40 lines, so owning
+it costs little and buys control, provider isolation, single-store history, and exact visibility into
+what is sent to the model. LangChain is the weakest fit (its abstraction depth is the opposite of "audit
+exactly what reaches the model"); the Agents SDK and LangGraph are genuine future contenders.
+
+**Consequences.** Positive: minimal dependencies; provider isolation and single-store history hold; the
+turn loop is trivially testable. Negative: the app owns streaming normalization, fallback, and error
+handling a framework would ship tested — a small, well-tested wheel deliberately reinvented because the
+framework's other two parts could not be used.
+
+**Revisit triggers.** Adopt a framework when the scope grows past the loop: the model enters the write
+path (V2), or genuine multi-agent handoffs / durable branching workflows appear. Choose by fit —
+**OpenAI-committed + handoff-heavy → Agents SDK; model-agnostic + durable, human-in-the-loop workflows →
+LangGraph** — decided on the golden set. Adopt it **behind the `ModelAdapter`/registry boundary**, with
+its session/checkpointer backed by MongoDB and provider isolation preserved; never a big-bang rewrite of
+the working public flow. **MCP is orthogonal** (a tool-transport standard, not a runtime) and is decided
+separately. (Framework capabilities cited here reflect their design as of early 2026; re-verify before
+committing.)
+
+## ADR-021: Authenticated trust tier — the model may act, authorized by the application — **Proposed (V2; amends ADR-016 / invariant #2 for authenticated users only)**
+
+**Context.** V1's model is strictly read-only and out of the write path (invariant #2, ADR-016) — correct
+for an anonymous public bot. V2 introduces authenticated customers who need to read their own account,
+portal, and ticket data and, selectively, to have the assistant act for them. A rule is needed that adds
+this power without recreating the public-bot risk.
+
+**Decision.** Two trust tiers (see doc 07). The **public tier is unchanged** (read-only). The
+**authenticated tier** resolves a **capability-scoped toolset from the authenticated principal**
+(identity + tenant + role, established server-side from the portal SSO — never asserted by the model or
+browser). Within that tier the model **may** call guarded write tools, subject to non-negotiable rules:
+(a) **authorization is resolved from the session, never from the model's arguments**, and each tool does
+its own per-call tenant/role check; (b) actions that contact a human, create a record, or move money are
+**user-confirmed**; only low-stakes, reversible, idempotent actions may be **direct**, each individually
+risk-reviewed; (c) private knowledge is **application-selected per tenant** (ADR-012), never
+model-selected; (d) history stays in MongoDB, **tenant-scoped**, moving to a separate messages collection
+per ADR-015; (e) every authenticated action and private-data access writes an **append-only audit**
+record with the real customer identity; (f) external systems (CRM/billing/ticketing/MCP) stay behind
+adapters, local ids out.
+
+**Consequences.** Enables personalized, integrated support and safe automated actions. Introduces a
+tenancy/authorization (IDOR) surface that must be closed by **object-scope checks on every read and
+write** — the exact surface the V1 security review flagged as arriving "the moment tenancy arrives";
+the `tenant_id`/`account_id` seams are already anticipated. Requires a production identity provider and
+tenant resolution (Phase 0 of doc 07).
+
+**Dependencies / revisit.** Requires the production IdP; composes with ADR-012 (private stores), ADR-015
+(tenant messages collection), ADR-019 (async delivery), and ADR-020 (agent runtime). Promote from
+Proposed to Accepted only through the doc 02 §8 V2 design gate.
 
 ---
 

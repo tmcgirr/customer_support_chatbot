@@ -48,4 +48,6 @@ the remaining doc 06 §6 decisions** — most critically the content approvals
 (Legal/Marketing/Sales/Security) and destination selection (Sales/Client Success), plus the
 prod environment standup (domain + prod OpenAI project). Cut over per `docs/DEPLOY_PROD.md`,
 re-run the golden gate on the prod config, and re-confirm items 1–2, 6–8 on the real production
-environment before public traffic.
+environment before public traffic. For the full hardening/scale/durability plan beyond the launch gate
+— the WAF + IdP gates, concurrency and MongoDB at scale, provider rate-limit/outage resilience, and the
+3-month → 3-year maintenance horizon — see `docs/PRODUCTION_READINESS.md`.

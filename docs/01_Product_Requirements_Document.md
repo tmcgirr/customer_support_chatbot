@@ -71,7 +71,7 @@ V1 makes the POC safe and reliable for public use:
 
 ## 3.3 Long-term goals (V2+)
 
-Authenticated client support, tenant-specific knowledge and tools, ticket status, human takeover, multilingual and cross-channel support. V2+ is a separate trust tier and is out of scope for current build decisions except where noted.
+Authenticated client support: a logged-in customer can ask about their own account, portal, and ticket status, and — through guarded, per-request-authorized tools — have the assistant act for them (pre-filled requests, and selectively, low-stakes automated actions), plus human takeover to a live agent, and multilingual / cross-channel support. Identity reuses the client portal (SSO); the model acts only via application-authorized tools, never from its own arguments. V2+ is a separate trust tier and is out of scope for current build decisions except where noted; the full design is `docs/07_V2_Authenticated_Capability_Plan.md` (with ADR-020 and ADR-021 in doc 03).
 
 ---
 

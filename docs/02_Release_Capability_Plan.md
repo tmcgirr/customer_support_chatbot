@@ -116,6 +116,8 @@ Semantic topic clustering; intent/topic labeling (async, not in the request path
 
 Client authentication, tenant resolution and roles, tenant-scoped conversations and retention, private Vector Stores per security domain (application-selected, never model-selected), client tools with per-call tenant/role validation, human takeover with WebSockets, regional and enterprise controls, dedicated analytics/event infrastructure only when justified.
 
+**Design & sequencing:** the authenticated build is specified in `docs/07_V2_Authenticated_Capability_Plan.md` (trust tiers, portal-SSO identity, capability map by risk, private per-tenant stores, and a phased Phase 0–4 rollout), with the durable decisions recorded as **ADR-020** (agent runtime) and **ADR-021** (authenticated trust tier) in doc 03.
+
 Note: because V1 history is already provider-neutral (MongoDB-owned), the V2+ "provider-neutral conversation layer" work item is eliminated.
 
 ---

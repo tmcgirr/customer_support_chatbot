@@ -156,12 +156,14 @@ Fuller setup, seeding, and ops are in [QUICKSTART.md](QUICKSTART.md) and the
   [03 — Architecture & ADRs](docs/03_Architecture_and_Decision_Records.md) ·
   [04 — API & Data Contracts](docs/04_API_and_Data_Contracts.md) ·
   [05 — Conversation & Content Spec](docs/05_Conversation_and_Content_Specification.md) ·
-  [06 — Backlog & Delivery Plan](docs/06_Backlog_and_Delivery_Plan.md)
+  [06 — Backlog & Delivery Plan](docs/06_Backlog_and_Delivery_Plan.md) ·
+  [07 — V2 Authenticated Capability Plan](docs/07_V2_Authenticated_Capability_Plan.md) *(forward direction)*
 
 **Operations & compliance:**
 - [Staging deploy](docs/DEPLOY_STAGING.md) · [Production deploy](docs/DEPLOY_PROD.md) ·
   [Production runbook](docs/RUNBOOK_PROD.md) · [Privacy notice (DRAFT)](docs/PRIVACY_NOTICE.md) ·
-  [Security review (V1)](docs/SECURITY_REVIEW_V1.md)
+  [Security review (V1)](docs/SECURITY_REVIEW_V1.md) ·
+  [Production readiness](docs/PRODUCTION_READINESS.md)
 
 **Quality:**
 - [Evaluation tester guide](docs/EVAL_TESTER_GUIDE.md) — the golden-set gate + dev tool.
