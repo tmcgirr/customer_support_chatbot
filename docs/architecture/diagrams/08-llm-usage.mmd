@@ -1,0 +1,28 @@
+flowchart TB
+  subgraph api["API — interactive"]
+    orch["ChatOrchestrator"]
+  end
+  subgraph worker["Worker — batch, no tools"]
+    lab["labeler"]
+    sum["summarizer"]
+    ins["insights service"]
+  end
+  subgraph adapter["ModelAdapter — provider boundary"]
+    send["send()<br/>streaming · WITH tools"]
+    classify["classify()<br/>one-shot · NO tools"]
+    embed["embed()<br/>batch"]
+  end
+  orch -->|"chat / testing"| send
+  lab -->|"labeling"| classify
+  sum -->|"summary"| classify
+  ins -->|"insights"| classify
+  ins -->|"embeddings"| embed
+  send --> prov[("Active provider<br/>OpenAI / Anthropic / OpenRouter")]:::ext
+  classify --> prov
+  embed --> oai[("OpenAI Embeddings<br/>ALWAYS")]:::ext
+  classify -.->|"on_usage"| roll["llm_usage rollup"]
+  embed -.->|"on_usage"| roll
+  send -.-> perm["per-message usage on conversation"]
+  roll --> cost["GET /admin/usage<br/>priced breakdown + budget"]
+  perm --> cost
+  classDef ext fill:#6b7280,stroke:#4b5563,color:#fff

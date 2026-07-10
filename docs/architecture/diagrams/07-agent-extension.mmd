@@ -1,0 +1,24 @@
+flowchart LR
+  subgraph agent["Agent — READ-ONLY tool boundary"]
+    reg["ToolRegistry<br/>specs() + execute()"]
+    t1["search_knowledge"]
+    t2["get_canonical_answer"]
+    t3["get_portal_information"]
+    tnew["+ your_new_tool (read-only)"]:::new
+    reg --- t1
+    reg --- t2
+    reg --- t3
+    reg --- tnew
+  end
+  t1 --> ks[("Vector Store")]:::ext
+  t2 --> can[("canonical_answers")]:::ext
+  t3 --> cfg[("config")]:::ext
+  tnew --> src[("a READ source")]:::new
+
+  agent -.->|"offers an action id (never a write)"| act["suggested action<br/>e.g. strategy_call"]
+  act --> conf["widget renders, USER CONFIRMS"]
+  conf --> ep["typed endpoint<br/>POST /api/v1/requests"]
+  ep --> wk["worker delivers / executes"]
+
+  classDef new fill:#dcfce7,stroke:#16a34a,color:#111
+  classDef ext fill:#6b7280,stroke:#4b5563,color:#fff

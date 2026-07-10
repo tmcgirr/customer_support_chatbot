@@ -1,0 +1,16 @@
+sequenceDiagram
+  autonumber
+  participant WK as Worker
+  participant AD as Adapter
+  participant DB as MongoDB
+  participant OP as Operator
+  participant API as API
+
+  WK->>AD: classify / embed
+  AD->>AD: on_usage(model, category, input, output)
+  AD->>DB: $inc daily rollup — date:provider:model:category
+  OP->>API: GET /admin/usage
+  API->>DB: rollup rows + conversation-derived chat/testing usage
+  API->>API: price via pricing table → UsageBreakdown + month-to-date $
+  API-->>OP: by provider / model / category + budget bar
+  Note over WK,API: worker monitor raises llm_budget_exceeded at MTD ≥ LLM_MONTHLY_BUDGET_USD

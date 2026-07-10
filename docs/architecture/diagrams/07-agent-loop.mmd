@@ -1,0 +1,15 @@
+flowchart TB
+  s([User turn]) --> w["Build window from Mongo"]
+  w --> mcall["adapter.send(system prompt, InputItems, tools)"]
+  mcall --> prov[("Provider<br/>OpenAI / Anthropic / OpenRouter")]:::ext
+  prov --> ev{"stream"}
+  ev -->|"TextDelta"| sse["SSE response.delta to widget"]
+  ev -->|"ToolCall"| exec["ToolRegistry.execute(name, args)"]
+  exec --> t["3 read-only tools<br/>search_knowledge · get_canonical_answer · get_portal_information"]
+  t --> rd[("READ<br/>Vector Store · canonical_answers · config")]:::ext
+  exec --> acc["feed back AssistantToolCall + ToolOutput<br/>accumulate canonical_answer_id · sources · actions"]
+  acc --> chk{"tool called and rounds remain?"}
+  chk -->|"yes: next stateless round"| mcall
+  chk -->|"no / final round drops tools"| fin["complete_turn: persist assistant message"]
+  fin --> done(["response.completed + suggested_actions"])
+  classDef ext fill:#6b7280,stroke:#4b5563,color:#fff

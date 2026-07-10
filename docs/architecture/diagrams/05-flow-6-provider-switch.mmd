@@ -1,0 +1,12 @@
+sequenceDiagram
+  autonumber
+  participant OP as Operator
+  participant API as API
+  participant DB as MongoDB
+  participant WK as Worker
+
+  OP->>API: POST /admin/model-provider {provider, reason}
+  API->>API: reject if the provider's key isn't configured (400)
+  API->>DB: audit switch_model_provider → set_active_provider
+  API->>API: ProviderResolver.invalidate() — instant in this process
+  Note over WK: Worker resolver picks up the change within the ~10s TTL

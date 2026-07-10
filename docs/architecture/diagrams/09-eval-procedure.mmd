@@ -1,0 +1,11 @@
+flowchart LR
+  draft["Draft change<br/>new sys-vN.md · model · provider"] --> ev["eval.run --compare<br/>on the target config"]
+  ev --> report["HTML / PDF report<br/>ranking + case-by-config diff"]
+  report --> review{"pass rate >= baseline?<br/>diff breaks nothing?"}
+  review -->|"no"| draft
+  review -->|"yes"| commit["commit the versioned change<br/>reviewed code, not a UI edit"]
+  commit --> stag["promote to staging"]
+  stag --> ggate["golden gate GREEN<br/>on the target config"]
+  ggate --> prod["promote to production"]
+  classDef ok fill:#dcfce7,stroke:#16a34a,color:#111
+  class prod ok

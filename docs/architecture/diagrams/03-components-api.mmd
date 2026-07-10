@@ -1,0 +1,41 @@
+flowchart TB
+  subgraph pub["Public API · app/api/public"]
+    conv["conversations.py<br/>create + session token"]
+    msg["messages.py<br/>send (SSE) · transcript"]
+    reqp["requests.py<br/>submit request"]
+    fb["feedback.py"]
+    privp["privacy.py<br/>non-disclosing intake"]
+  end
+  subgraph adm["Admin API · app/api/admin"]
+    router["router.py · ~32 endpoints"]
+    aauth["auth.py · Basic · admin/viewer"]
+  end
+  subgraph agent["Agent · app/agent (READ-ONLY model boundary)"]
+    orch["ChatOrchestrator<br/>window + bounded tool loop"]
+    resolver["ProviderResolver<br/>runtime provider (TTL cache)"]
+    adapter["adapter.py<br/>OpenAI · Anthropic · OpenRouter"]
+    tools["ToolRegistry<br/>3 read-only tools"]
+  end
+  subgraph dom["Domain · app/domain/*"]
+    crepo["conversations<br/>atomic turn ops"]
+    canon["canonical<br/>(approved-only read)"]
+    ksearch["knowledge/search<br/>Vector Store"]
+    rsvc["requests service<br/>idempotent persist"]
+    audit["audit (append-only)"]
+    masking["core/masking"]
+  end
+
+  msg --> crepo
+  msg --> orch
+  orch --> resolver --> adapter
+  orch --> tools --> ksearch
+  tools --> canon
+  reqp --> rsvc
+  router --> aauth
+  router --> masking
+  router --> audit
+  adapter -->|HTTPS| prov[("providers")]:::ext
+  ksearch -->|HTTPS| vs[("Vector Store")]:::ext
+  crepo & canon & rsvc & audit -->|motor| mongo[("MongoDB")]:::ext
+
+  classDef ext fill:#6b7280,stroke:#4b5563,color:#fff

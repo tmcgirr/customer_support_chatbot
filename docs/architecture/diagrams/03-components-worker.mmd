@@ -1,0 +1,21 @@
+flowchart TB
+  loop["Worker loop · app/worker.py<br/>reclaim leases → schedule due → monitor → drain ≤20/tick"]
+  jobs["JobRepository · durable queue<br/>atomic claim · lease · retry→dead_letter"]
+  handlers["Job handlers · domain/jobs/tasks.py"]
+  loop --> jobs --> handlers
+
+  handlers --> deliver["DeliveryService<br/>at-most-once"]
+  handlers --> labeler["ConversationLabeler"]
+  handlers --> summ["ConversationSummarizer"]
+  handlers --> insights["InsightsService<br/>cluster + gaps + FAQ draft"]
+  handlers --> agg["AggregatesRepository"]
+  handlers --> ret["retention + privacy_delete"]
+  handlers --> poll["poll_indexing"]
+
+  deliver -->|HTTPS/SMTP| dst[("delivery destination")]:::ext
+  labeler & summ & insights -->|classify / embed| prov[("OpenAI / active provider")]:::ext
+  poll -->|status| vs[("Vector Store")]:::ext
+  handlers -->|motor| mongo[("MongoDB")]:::ext
+  labeler & summ & insights -.->|on_usage hook| usage["LlmUsageRepository"]
+
+  classDef ext fill:#6b7280,stroke:#4b5563,color:#fff

@@ -1,0 +1,35 @@
+flowchart TB
+  subgraph internet["🌐 Public internet — untrusted"]
+    visitor([Visitor])
+    hostpage["Host page (embeds widget)"]
+  end
+
+  subgraph edge["Edge — Caddy (TLS · CSP/HSTS · body cap · SSE)"]
+    caddy["Caddy"]
+  end
+
+  subgraph app["Application trust zone"]
+    api["API<br/>HMAC session · rate limits · role auth · PII masking · fixed error envelope"]
+    worker["Worker<br/>durable jobs · retention · verified erasure"]
+    subgraph readonly["🔒 Read-only model boundary"]
+      tools["3 read-only tools<br/>(lookups only)"]
+      adapter["Adapter<br/>provider-isolated"]
+    end
+    mongo[("MongoDB<br/>source of truth")]
+  end
+
+  subgraph external["External systems — isolated behind adapters"]
+    providers["OpenAI / Anthropic / OpenRouter"]
+    vector["Vector Store"]
+    delivery["Delivery destination"]
+  end
+
+  visitor -->|"HTTPS / SSE"| caddy --> api
+  hostpage -. "origin-checked postMessage" .- visitor
+  api --> tools --> adapter --> providers
+  tools --> vector
+  api --> mongo
+  worker --> mongo
+  worker -->|"async, at-most-once"| delivery
+  worker --> adapter
+

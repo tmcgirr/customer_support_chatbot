@@ -23,6 +23,7 @@ Nine documents were consolidated to six. The UX specification's normative conten
 Beyond the planning package, `docs/` now holds the shipped-system and operational documentation:
 
 - **Capabilities** — [`capabilities/`](capabilities/) — one doc per feature (what / why / status / future). **Start here for the built system.**
+- **Architecture (C4)** — [`architecture/`](architecture/) — system context → containers → components, the 13-collection data model, runtime data flows, and cross-cutting/trust-boundary concerns (Mermaid diagrams).
 - **Operations** — [DEPLOY_STAGING](DEPLOY_STAGING.md) · [DEPLOY_PROD](DEPLOY_PROD.md) · [RUNBOOK_PROD](RUNBOOK_PROD.md) · [RUNBOOK_POC](RUNBOOK_POC.md) (historical).
 - **Compliance** — [PRIVACY_NOTICE](PRIVACY_NOTICE.md) (DRAFT, pending Legal) · [SECURITY_REVIEW_V1](SECURITY_REVIEW_V1.md).
 - **Quality** — [EVAL_TESTER_GUIDE](EVAL_TESTER_GUIDE.md) (the golden-set gate + dev tool).

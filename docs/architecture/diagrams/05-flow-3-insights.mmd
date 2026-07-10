@@ -1,0 +1,20 @@
+sequenceDiagram
+  autonumber
+  participant WK as Worker
+  participant DB as MongoDB
+  participant E as OpenAI Embeddings
+  participant M as Model
+
+  WK->>DB: list ended conversations in the period
+  WK->>WK: extract representative question per convo (heuristic, no model)
+  WK->>E: batch-embed questions
+  E-->>WK: vectors
+  WK->>WK: cluster_by_similarity (cosine graph, in-memory)
+  loop each notable cluster (>= size 3)
+    WK->>M: classify → theme label · coverage · proposed FAQ
+    opt daily run + coverage missing/unclear
+      WK->>DB: audit propose_faq → upsert canonical DRAFT (insight_ intent)
+    end
+  end
+  WK->>M: classify → insights narrative
+  WK->>DB: upsert insights_report (idempotent per "<type>:<key>")

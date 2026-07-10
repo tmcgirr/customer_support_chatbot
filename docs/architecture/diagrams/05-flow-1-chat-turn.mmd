@@ -1,0 +1,27 @@
+sequenceDiagram
+  autonumber
+  participant W as Widget
+  participant C as Caddy
+  participant API as API
+  participant DB as MongoDB
+  participant AD as Adapter
+  participant P as Provider
+
+  W->>C: POST /conversations/{cid}/messages (Accept: text/event-stream)
+  C->>API: reverse_proxy (flush_interval -1)
+  API->>API: verify HMAC token bound to cid · validate size · rate-limit per-session and per-IP
+  API->>DB: begin_turn — ONE findOneAndUpdate (run lock + append user msg + dedupe key + cap check)
+  API-->>W: message.accepted → response.started
+  API->>DB: build window (completed, non-empty messages)
+  loop up to 5 rounds (last round drops tools)
+    API->>AD: send(system prompt, InputItems, tool specs)
+    AD->>P: Responses/Messages · stream · store=false · token cap
+    P-->>AD: text deltas / tool-call fragments
+    AD-->>API: TextDelta / ToolCall / Completed (normalized)
+    API-->>W: response.delta{text}
+    opt tool call (read-only)
+      API->>API: search_knowledge · get_canonical_answer · get_portal_information
+    end
+  end
+  API->>DB: complete_turn (append assistant msg + clear lock)
+  API-->>W: response.completed{assistant_message_id, suggested_actions}

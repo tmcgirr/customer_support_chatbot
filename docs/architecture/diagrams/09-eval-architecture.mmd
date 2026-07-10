@@ -1,0 +1,24 @@
+flowchart TB
+  tester([Developer / tester]) --> cli["eval.run CLI<br/>--fake · --compare · --provider · --model · --prompt-version · --report/--pdf/--json"]
+  cli --> cfg["EvalConfig(s)<br/>provider · model · fallback · prompt_version"]
+  golden[("golden_set.yaml<br/>39 cases")]:::ext --> runner["Runner (run_config)<br/>builds the REAL stack per config"]
+  cfg --> runner
+  subgraph real["Production components — the REAL turn, not a mock"]
+    orch["ChatOrchestrator"]
+    treg["ToolRegistry<br/>3 read-only tools"]
+    adp["ModelAdapter<br/>real provider OR --fake plumbing"]
+  end
+  runner --> orch
+  orch --> treg
+  orch --> adp
+  treg --> mongo[("Mongo<br/>canonical_answers")]:::ext
+  treg --> vsx[("Vector Store")]:::ext
+  adp --> prov[("Provider · real run")]:::ext
+  orch --> tr["TurnResult<br/>text · routed canonical intent · actions · sources"]
+  tr --> asrt["assertions.evaluate()<br/>7 pure checks"]
+  asrt --> res["CaseResult to RunResult<br/>score · by category · rank"]
+  res --> rep["report.py / pdf.py<br/>HTML · PDF · JSON + diff matrix"]
+  res --> gate{"any case failed?"}
+  gate -->|"yes"| x1["exit 1 — gate blocks"]
+  gate -->|"no"| x0["exit 0"]
+  classDef ext fill:#6b7280,stroke:#4b5563,color:#fff

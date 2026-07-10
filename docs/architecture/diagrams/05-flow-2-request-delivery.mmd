@@ -1,0 +1,24 @@
+sequenceDiagram
+  autonumber
+  participant W as Widget
+  participant API as API
+  participant DB as MongoDB
+  participant WK as Worker
+  participant D as Delivery transport
+
+  W->>API: POST /requests (Idempotency-Key, confirmed:true)
+  API->>DB: create_or_replay (unique conversation_id+key) → status received
+  API->>DB: enqueue deliver_request job (resource_id = req_)
+  API-->>W: {request_id, reference, duplicate}
+  WK->>DB: claim job (atomic lease)
+  WK->>DB: mark_delivering
+  opt retry (attempt > 1)
+    WK->>D: find_by_reference (probe — may have already sent)
+  end
+  WK->>D: deliver (webhook POST / SMTP / simulated)
+  alt delivered
+    D-->>WK: external reference
+    WK->>DB: mark_delivered (+ external_reference)
+  else ambiguous / budget exhausted
+    WK->>DB: mark_delivery_failed → parked for admin redeliver
+  end

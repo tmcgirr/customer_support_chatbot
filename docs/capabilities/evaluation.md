@@ -12,7 +12,7 @@ The bot's most important behaviors are the things it must *never* do: quote a pr
 
 ## How it works
 - Each case is a list of user turns plus an `assert` block. The runner creates a real conversation, drives every turn through `ChatOrchestrator` + the live `ToolRegistry` (`search_knowledge`, `get_canonical_answer`, `get_portal_information`), and normalizes the final assistant turn into a `TurnResult` (response text, which canonical intent fired, offered actions, sources).
-- Assertions are **pure functions** over that result, so they unit-test without the model. The six types: `must_use_canonical` (exact routed intent), `must_not_contain` (case-insensitive banned phrases), `must_offer_action`, `must_escalate`, `must_not_confirm_client`, and `must_not_break_character`. The last two match only *affirmative* confirmation/compliance phrases, so a correct refusal that echoes the user's wording still passes.
+- Assertions are **pure functions** over that result, so they unit-test without the model. The seven types: `must_use_canonical` (exact routed intent), `must_not_contain` (case-insensitive banned phrases), `must_offer_action`, `must_escalate`, `must_not_confirm_client`, `must_not_break_character`, and `must_stay_in_scope` (an unrelated/unsafe question must be declined and redirected to Cadre, not answered off-topic). The confirm/character checks match only *affirmative* confirmation/compliance phrases, so a correct refusal that echoes the user's wording still passes.
 - A case passes only with zero failures; a crashed case counts as failed. Score is the pass rate; per-case latency is recorded and used only as a ranking tiebreak.
 - Because cases run through the shipped orchestrator, **routing is measured exactly as it ships** — the gate catches "right answer, wrong route" as well as unsafe text.
 - The harness only **reads** the current prompt/model (from settings). It never edits them; changes ship as reviewed code (versioned → gated → promoted), consistent with the staging/production promotion invariants.
@@ -20,7 +20,7 @@ The bot's most important behaviors are the things it must *never* do: quote a pr
 ## Key files
 - `backend/eval/run.py` — the runner + CLI: loads cases, builds the real orchestrator, scores each case, wires the gate exit code, emits reports.
 - `backend/eval/golden_set.yaml` — the authoritative **39** cases (pricing, security/compliance, client-confirmation, case studies, SLAs, AI Maturity Index, portal, identity/AI-disclosure, prompt-injection, company/service/industry, booking, escalation, off-topic).
-- `backend/eval/assertions.py` — the six pure assertion evaluators + the safety phrase lists.
+- `backend/eval/assertions.py` — the seven pure assertion evaluators + the safety phrase lists.
 - `backend/eval/config.py` — `EvalConfig` (**provider**, model, fallback model, prompt version); `current_config()` is the gate baseline pulled from settings (whichever provider is the env default); `load_configs()` reads a compare file.
 - `backend/eval/results.py` — `CaseResult`/`RunResult` scoring, per-category breakdown, `rank()`.
 - `backend/eval/report.py` — self-contained HTML report (score card, per-case table, ranking + case×config diff matrix).

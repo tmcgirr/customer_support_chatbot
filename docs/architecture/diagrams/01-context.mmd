@@ -1,0 +1,26 @@
+flowchart TB
+  visitor([Website visitor<br/>public, anonymous]):::person
+  operator([Cadre operator<br/>admin / viewer role]):::person
+  tester([Developer / tester]):::person
+
+  sys["<b>Cadre AI Support Chatbot</b><br/>chat widget · admin console · API · worker"]:::sys
+
+  openai[("OpenAI<br/>Responses API · Vector Stores · Embeddings")]:::ext
+  anthropic[("Anthropic<br/>Messages API")]:::ext
+  openrouter[("OpenRouter<br/>OpenAI-compatible proxy")]:::ext
+  mongo[("MongoDB<br/>DigitalOcean Managed")]:::ext
+  delivery[("Delivery destination<br/>webhook / email / CRM")]:::ext
+
+  visitor -->|"ask questions, book a call,<br/>submit a request · HTTPS + SSE"| sys
+  operator -->|"review conversations, requests,<br/>insights; manage content · HTTPS"| sys
+  tester -.->|"run the golden-set eval<br/>(CLI, dev only, read-only)"| sys
+
+  sys -->|"stateless chat turn +<br/>insights embeddings"| openai
+  sys -->|"chat turn (when selected)"| anthropic
+  sys -->|"chat turn via OpenAI-compat<br/>(when selected)"| openrouter
+  sys -->|"all persistent state (motor)"| mongo
+  sys -->|"deliver requests<br/>(async, worker, at-most-once)"| delivery
+
+  classDef person fill:#0f766e,stroke:#0b544e,color:#fff
+  classDef sys fill:#134e6f,stroke:#0d3a52,color:#fff
+  classDef ext fill:#6b7280,stroke:#4b5563,color:#fff

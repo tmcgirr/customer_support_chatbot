@@ -1,16 +1,73 @@
 # Cadre AI — Customer Support Chatbot
 
-A public-facing customer-support chatbot for **Cadre AI**, an AI strategy & implementation
-consultancy. Visitors ask about services, approach, security, and pricing in a chat widget;
-the bot answers from approved content, and — only after the visitor confirms — hands off
-structured requests (a strategy call, portal support, or an escalation) to the business.
+A production-grade, public support chatbot for **Cadre AI**, an AI strategy &
+implementation consultancy. Visitors ask about services, approach, security, and pricing in
+an embedded chat widget; the bot answers **only from approved content** and — after the
+visitor confirms — hands a structured request (a strategy call, portal support, or an
+escalation) to the business. A role-controlled admin console gives the team the whole
+picture: conversations, requests, knowledge, analytics, and privacy operations.
 
-**Stack:** FastAPI backend + a React chat widget (iframe) and admin SPA + MongoDB +
-the OpenAI Responses API and Vector Stores.
+> **The one idea behind the whole design:** the model can *look things up, but it can never
+> act.* Every side effect goes through a typed endpoint **after the visitor confirms**, and
+> is delivered asynchronously by a background worker — never by the model.
 
-> **New here? Start with the [Capabilities Catalog](docs/capabilities/) — one short doc per
-> feature (what it is, why it exists, status, and where it can go). This README is the map;
-> the catalog is the tour.**
+<p align="center">
+  <img src="docs/images/chatbot_answer.png" alt="Cadre AI chat widget streaming an answer and offering to book a strategy call" width="330">
+</p>
+
+<p align="center"><em>The embedded widget streams answers token-by-token from approved
+content, then offers the right next step — here, “Book a strategy call” — without ever
+taking it unprompted.</em></p>
+
+> **New here?** Start with the **[Capabilities Catalog](docs/capabilities/)** — one short
+> doc per feature (what it is, why it exists, status, where it can go). This README is the
+> map; the catalog is the tour.
+
+---
+
+## Architecture at a glance
+
+![Cadre AI platform architecture — visitors and operators reach a Caddy edge that serves the widget and admin console; a FastAPI API and a background worker share one MongoDB and talk to AI providers, a vector store, and delivery destinations](docs/images/platform-architecture.png)
+
+A public **chat widget** (iframe) and an internal **admin SPA** — both React, served as static
+assets by **Caddy** — talk to a **FastAPI** API. A dedicated **background worker** shares one
+**MongoDB** with the API and owns everything with a side effect: request delivery, retention,
+analytics, and insights. Chat runs on **OpenAI**, **Anthropic**, or **OpenRouter** — chosen at
+runtime from the admin console and gated by the golden set before it can switch. Retrieval uses
+an **OpenAI Vector Store**.
+
+- **FastAPI modular monolith** + a dedicated **worker** — no Redis/broker; jobs live in MongoDB.
+- **MongoDB is the single source of truth** for conversation history. Model calls are stateless:
+  each turn rebuilds a windowed transcript from the conversation document and calls the provider.
+- **Provider isolation** — every external system (AI providers, CRM, ticketing) hides behind one
+  adapter; its types, IDs, and errors never leak out. The public API returns local IDs only.
+- **Two environments** — staging and production are fully separate (Mongo, provider project,
+  Vector Store). Approved content, prompts, and model config are **promoted**, never edited in
+  production, and gated by a golden evaluation set.
+
+The load-bearing rules are the **architecture invariants** in [CLAUDE.md](CLAUDE.md); the full
+picture is the **[C4 architecture set](docs/architecture/)** (context → containers → components,
+the data model, runtime flows, the agent, LLM usage, and the eval framework).
+
+---
+
+## Inside the admin console
+
+Role-controlled, PII-masked by default, and audited on every reveal — the console turns raw
+conversations into something the team can operate and improve.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/portal_dashboard.png" alt="Admin dashboard with KPI cards, a 30-day activity chart, and outcome breakdowns"></td>
+<td width="50%"><img src="docs/images/portal_insights.png" alt="Insights screen clustering visitor questions into themes with proposed FAQs for the top knowledge gaps"></td>
+</tr>
+<tr>
+<td align="center"><em><strong>Dashboard</strong> — conversations, requests,
+contact-conversion, and where conversations land, at a glance.</em></td>
+<td align="center"><em><strong>Insights</strong> — visitor questions clustered into themes,
+with proposed FAQs for the top knowledge gaps, approved in one click.</em></td>
+</tr>
+</table>
 
 ---
 
@@ -20,7 +77,8 @@ the OpenAI Responses API and Vector Stores.
 |---|---|
 | **Build** | **V1** (production-grade POC) + a **V1.5** feature wave — both complete |
 | **Running on** | a **staging** environment (DigitalOcean droplet + DO Managed MongoDB), with **mock** request delivery |
-| **Tests** | 384 backend · 56 frontend, green |
+| **Tests** | **460 backend · 87 frontend**, green |
+| **Chat providers** | OpenAI (Responses API) · Anthropic (Messages API) · OpenRouter (OpenAI-compatible proxy) — switchable at runtime, gated by the golden set |
 | **Production** | **not yet stood up** — gated on content sign-off, a real delivery destination, retention/legal sign-off, and infra (a domain, CDN/WAF, a pager). *These are owner/infra decisions, not remaining engineering.* |
 
 What actually shipped, feature by feature, is in the **[Capabilities Catalog](docs/capabilities/)**.
@@ -32,26 +90,12 @@ What actually shipped, feature by feature, is in the **[Capabilities Catalog](do
 - A **public chat widget** (embedded in an iframe) that streams answers token-by-token.
 - Answers come from **approved content only**: a small **canonical-answer** set wins for
   sensitive topics (pricing, security, portal, case studies), and an **OpenAI Vector Store**
-  provides retrieval over an approved knowledge corpus.
+  provides retrieval over an approved knowledge corpus. Anything unsupported escalates.
 - The **model is read-only** — its only tools *look things up*. It never writes, sends, or
   submits. Every side effect (a strategy-call request, an escalation) happens through a typed
-  application endpoint **after the visitor confirms**, and is delivered asynchronously by a
-  background worker.
+  application endpoint **after the visitor confirms**, delivered asynchronously by the worker.
 - An **admin console** (role-controlled, PII-masked, audited) gives the team visibility:
   conversations, requests, knowledge management, analytics/insights, and privacy operations.
-
-## Architecture at a glance
-
-- **FastAPI modular monolith** + a dedicated **background worker** — no Redis/broker; jobs live in MongoDB.
-- **MongoDB is the single source of truth** for conversation history. Model calls are stateless:
-  each turn rebuilds a windowed transcript from the conversation document and calls the Responses API.
-- **Provider isolation** — OpenAI (and any CRM/ticketing) types, IDs, and errors never leave their adapter.
-- **React** (Vite + TS): a widget (`iframe`, `postMessage` to the host) and a separate admin entry.
-- **Two environments** — staging and production are fully separate (Mongo, OpenAI project, Vector Store);
-  approved content, prompts, and model config are **promoted**, gated by a golden evaluation set.
-
-The load-bearing design rules are the **architecture invariants** in [CLAUDE.md](CLAUDE.md);
-the full rationale is in [docs/03 — Architecture & Decision Records](docs/03_Architecture_and_Decision_Records.md).
 
 ---
 
@@ -72,7 +116,7 @@ frontend/           React — chat widget + admin SPA (Vite + TS)
   src/              conversation/, shell/, host/, forms/ (widget) · admin/ · api/
 deploy/             docker-compose (staging/prod), Caddy, env examples
 scripts/            Mongo backup / restore
-docs/               planning package, capabilities catalog, runbooks, knowledge corpus
+docs/               planning package, capabilities catalog, C4 architecture, runbooks, knowledge corpus
 ```
 
 ---
@@ -102,6 +146,8 @@ Fuller setup, seeding, and ops are in [QUICKSTART.md](QUICKSTART.md) and the
 
 **Start here (the shipped system):**
 - **[Capabilities Catalog](docs/capabilities/)** — one doc per feature: what / why / status / future.
+- **[Architecture (C4)](docs/architecture/)** — system context → containers → components, the
+  data model, runtime flows, the **agent**, **LLM usage**, and the **eval framework** (Mermaid diagrams).
 - [CLAUDE.md](CLAUDE.md) — the architecture invariants (the trust boundary), for anyone changing code.
 
 **Planning package (the design):**

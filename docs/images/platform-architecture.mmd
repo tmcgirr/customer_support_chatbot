@@ -1,0 +1,38 @@
+flowchart LR
+  visitor([Website visitor]):::person
+  operator([Cadre operator]):::person
+
+  subgraph edge["Edge · Caddy — TLS · SSE · CSP"]
+    widget["Chat Widget<br/>iframe · streaming"]:::fe
+    admin["Admin Console<br/>roles · PII masking · audit"]:::fe
+  end
+
+  subgraph app["Application"]
+    api["API — FastAPI<br/>atomic turn · read-only agent · typed endpoints"]:::sys
+    worker["Worker<br/>delivery · retention · analytics · insights"]:::sys
+  end
+
+  mongo[("MongoDB<br/>single source of truth")]:::data
+
+  subgraph ai["AI providers — isolated behind one adapter"]
+    prov["OpenAI · Anthropic · OpenRouter"]:::ext
+    vec["Vector Store<br/>retrieval"]:::ext
+  end
+  delivery["Delivery<br/>webhook · email · CRM"]:::ext
+
+  visitor -->|"HTTPS / SSE"| widget
+  operator -->|"HTTPS"| admin
+  widget --> api
+  admin --> api
+  api <--> mongo
+  worker <--> mongo
+  api -->|"read-only tools"| prov
+  api --> vec
+  worker -->|"classify · embed"| prov
+  worker -->|"async · at-most-once"| delivery
+
+  classDef person fill:#0f766e,stroke:#0b544e,color:#fff
+  classDef sys fill:#134e6f,stroke:#0d3a52,color:#fff
+  classDef fe fill:#1d6fa5,stroke:#155a86,color:#fff
+  classDef data fill:#3f6212,stroke:#2c4308,color:#fff
+  classDef ext fill:#6b7280,stroke:#4b5563,color:#fff

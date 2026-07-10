@@ -1,0 +1,17 @@
+sequenceDiagram
+  autonumber
+  participant S as Subject
+  participant API as API
+  participant OP as Operator
+  participant DB as MongoDB
+  participant WK as Worker
+
+  S->>API: POST /privacy/requests (unauthenticated, rate-limited)
+  API->>DB: record pvr_ (pending)
+  API-->>S: identical generic acknowledgement (no existence signal)
+  OP->>OP: verify identity out-of-band
+  OP->>API: POST /admin/privacy-requests/{id}/verify (reason)
+  API->>DB: audit → mark_verified (guarded) → enqueue privacy_delete
+  WK->>DB: match requests + their conversations by requester email
+  WK->>DB: tombstone conversations · skeletonize requests · delete feedback
+  WK->>DB: store result_counts on pvr_ · audit

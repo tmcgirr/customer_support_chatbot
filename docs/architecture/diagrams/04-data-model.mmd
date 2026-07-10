@@ -1,0 +1,60 @@
+erDiagram
+  conversations ||--o{ requests : "conversation_id"
+  conversations ||--o{ feedback : "conversation_id + message_id"
+  conversations }o--o| canonical_answers : "assistant msg canonical_answer_id"
+  conversations }o--o{ knowledge_sources : "assistant msg sources[].kbs_"
+  jobs }o--o| requests : "resource_id (deliver_request)"
+  jobs }o--o| knowledge_sources : "resource_id (poll_indexing)"
+  jobs }o--o| privacy_requests : "resource_id (privacy_delete)"
+  insights_reports }o--o{ conversations : "cluster member ids"
+  insights_reports }o--o| canonical_answers : "auto-drafted FAQ"
+  privacy_requests }o--o{ requests : "erasure scope by email"
+  audit }o--o| conversations : "reveal target"
+
+  conversations {
+    string _id "cnv_ ULID"
+    string status "active|completed|abandoned|blocked|deleted"
+    object active_run "run lock or null"
+    int message_count
+    int message_cap
+    array messages "embedded msg_ (role,content,status,canonical_answer_id,sources[],usage)"
+    object labels "topic,intent (V1.5, async)"
+    object summary "tldr,key_points (V1.5, async)"
+    string outcome
+    datetime expire_at "sparse TTL (anonymous)"
+  }
+  requests {
+    string _id "req_ ULID"
+    string type "strategy_call|portal_support|human_escalation"
+    string conversation_id
+    string idempotency_key "unique per conversation"
+    object contact "name,email,company"
+    string status "received|delivering|delivered|delivery_failed"
+    string destination
+    string external_reference "provider ref (internal)"
+  }
+  canonical_answers {
+    string _id "can_ ULID"
+    string intent "unique"
+    string status "draft|approved"
+    string content
+    bool mandatory_escalation
+    array allowed_action_ids
+  }
+  knowledge_sources {
+    string _id "kbs_ ULID"
+    string title
+    bool approved
+    string lifecycle "active|replaced|removed"
+    string indexing_status "pending|indexed|failed"
+    string openai_file_id "internal"
+    string vector_store_id "internal"
+  }
+  jobs {
+    string _id "job_ ULID"
+    string type
+    string resource_id "target (req_/kbs_/pvr_) or null"
+    string status "pending|running|done|failed|dead_letter"
+    int attempts
+    datetime lock_expires_at "lease"
+  }

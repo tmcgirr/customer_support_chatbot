@@ -1,0 +1,8 @@
+flowchart LR
+  P([Person]):::person
+  S[Our container]:::sys
+  X[(External system)]:::ext
+  P -->|"interaction"| S -->|"protocol"| X
+  classDef person fill:#0f766e,stroke:#0b544e,color:#fff
+  classDef sys fill:#134e6f,stroke:#0d3a52,color:#fff
+  classDef ext fill:#6b7280,stroke:#4b5563,color:#fff
