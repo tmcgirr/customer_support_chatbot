@@ -32,6 +32,15 @@ def test_default_table_has_anthropic_and_embeddings() -> None:
     assert DEFAULT_MODEL_PRICING["text-embedding-3-small"].output_per_mtok == 0.0
 
 
+def test_default_openai_chat_rates_are_verified_values() -> None:
+    # Verified 2026-07-10 against OpenAI's pricing page + an independent aggregator; guards
+    # against silently reverting to the old placeholder rates.
+    mini = DEFAULT_MODEL_PRICING["gpt-5.4-mini"]
+    assert (mini.input_per_mtok, mini.output_per_mtok) == (0.75, 4.50)
+    full = DEFAULT_MODEL_PRICING["gpt-5.4"]
+    assert (full.input_per_mtok, full.output_per_mtok) == (2.50, 15.00)
+
+
 def test_parse_overrides_skips_malformed_entries() -> None:
     parsed = _parse_overrides("gpt-5.4-mini:0.5:3, claude-x:2:8, bad, :1:1, y:notnum:1")
     assert parsed["gpt-5.4-mini"].input_per_mtok == 0.5

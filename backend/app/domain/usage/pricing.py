@@ -1,10 +1,11 @@
 """LLM per-model pricing + cost.
 
-Prices are USD per 1M tokens. The provider is inferred from the model id. Anthropic rates
-are authoritative (from the pricing reference); OpenAI chat rates are PLACEHOLDERS (TODO:
-verify) and are meant to be corrected per-environment via the ``LLM_PRICING`` override
-(``config.llm_pricing_overrides``). Embeddings are billed to OpenAI regardless of the active
-chat provider — Anthropic has no embeddings API, so the Claude adapter reuses OpenAI's.
+Prices are USD per 1M tokens, standard tier (not batch / not prompt-cached). The provider is
+inferred from the model id. All rates below were verified on 2026-07-10 against each provider's
+official pricing page and an independent aggregator; still override per-environment via the
+``LLM_PRICING`` override (``config.llm_pricing_overrides``) if your contract differs. Embeddings
+are billed to OpenAI regardless of the active chat provider — Anthropic has no embeddings API,
+so the Claude adapter reuses OpenAI's.
 """
 
 from dataclasses import dataclass
@@ -20,21 +21,21 @@ class ModelPrice:
     output_per_mtok: float  # USD per 1M output tokens
 
 
-# $/1M tokens. Anthropic = authoritative; OpenAI chat = PLACEHOLDER — verify and correct via
-# the LLM_PRICING env override before trusting OpenAI $ figures. Embeddings are input-only.
+# $/1M tokens, standard tier. Verified 2026-07-10 (official pricing page + independent
+# aggregator). Add rows for any other model you route to, or override via LLM_PRICING.
 DEFAULT_MODEL_PRICING: dict[str, ModelPrice] = {
-    # Anthropic (authoritative)
+    # Anthropic
     "claude-haiku-4-5": ModelPrice("anthropic", 1.00, 5.00),
+    # Sonnet 5 standard price; an intro promo of $2/$10 runs through 2026-08-31.
     "claude-sonnet-5": ModelPrice("anthropic", 3.00, 15.00),
     "claude-opus-4-8": ModelPrice("anthropic", 5.00, 25.00),
     "claude-opus-4-7": ModelPrice("anthropic", 5.00, 25.00),
-    # OpenAI chat — PLACEHOLDER rates. TODO: set real values via LLM_PRICING per environment.
-    "gpt-5.4-mini": ModelPrice("openai", 0.25, 2.00),
-    "gpt-5.4": ModelPrice("openai", 1.25, 10.00),
+    # OpenAI chat
+    "gpt-5.4-mini": ModelPrice("openai", 0.75, 4.50),
+    "gpt-5.4": ModelPrice("openai", 2.50, 15.00),
     # OpenAI embeddings (input-only; output priced at 0).
     "text-embedding-3-small": ModelPrice("openai", 0.02, 0.00),
-    # OpenRouter — PLACEHOLDER (its per-model rates carry a markup and vary). TODO: set real
-    # values via LLM_PRICING; add rows for whichever OpenRouter models you route to.
+    # OpenRouter routes Claude Haiku 4.5 at Anthropic's direct rate (no markup for this model).
     "anthropic/claude-haiku-4.5": ModelPrice("openrouter", 1.00, 5.00),
 }
 

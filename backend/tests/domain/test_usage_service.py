@@ -64,6 +64,20 @@ def test_unpriced_model_is_flagged_not_hidden() -> None:
     assert line.input_tokens == 100 and line.output_tokens == 50
 
 
+def test_unknown_model_counted_but_not_flagged_as_unpriced() -> None:
+    # Chat usage on an assistant message that never recorded a model → "unknown" sentinel.
+    # It's not a real model, so it must NOT appear in the "set LLM_PRICING" notice, but its
+    # tokens are still accounted for in the by-model rollup.
+    b = build_breakdown(
+        [],
+        [{"model": None, "eval": False, "input_tokens": 500, "output_tokens": 200, "requests": 3}],
+    )
+    assert b.unpriced_models == []
+    line = next(line for line in b.by_model if line.label == "unknown")
+    assert line.priced is False and line.cost_usd == 0.0
+    assert line.input_tokens == 500 and line.output_tokens == 200
+
+
 def test_total_cost_sums_priced_rows() -> None:
     assert total_cost(WORKER, []) == 1.0
     assert total_cost([], []) == 0.0

@@ -11,6 +11,12 @@ from typing import Any
 
 from app.domain.usage.pricing import infer_provider, pricing_table
 
+# Sentinel for chat usage on assistant messages that never recorded a model name (legacy /
+# un-attributed spend, e.g. a turn whose stream ended before the model event fired). It is not
+# a real model, so it is NOT surfaced as an "unpriced model" the operator should set a price
+# for — it still appears in the by-model rollup so the tokens are accounted for.
+UNKNOWN_MODEL = "unknown"
+
 
 @dataclass(frozen=True)
 class UsageLine:
@@ -63,7 +69,7 @@ def _normalize(worker_rows: list[dict[str, Any]], chat_rows: list[dict[str, Any]
         recs.append(_Rec(provider, model, category, inp, out, req, cost, priced))
 
     for r in worker_rows:
-        model = str(r.get("model") or "unknown")
+        model = str(r.get("model") or UNKNOWN_MODEL)
         add(
             str(r.get("provider") or infer_provider(model)),
             model,
@@ -73,7 +79,7 @@ def _normalize(worker_rows: list[dict[str, Any]], chat_rows: list[dict[str, Any]
             int(r.get("requests", 0)),
         )
     for r in chat_rows:
-        model = str(r.get("model") or "unknown")
+        model = str(r.get("model") or UNKNOWN_MODEL)
         add(
             infer_provider(model),
             model,
@@ -126,7 +132,9 @@ def build_breakdown(
         by_provider=_rollup(recs, "provider"),
         by_model=_rollup(recs, "model"),
         by_category=_rollup(recs, "category"),
-        unpriced_models=sorted({r.model for r in recs if not r.priced}),
+        unpriced_models=sorted(
+            {r.model for r in recs if not r.priced and r.model != UNKNOWN_MODEL}
+        ),
     )
 
 
