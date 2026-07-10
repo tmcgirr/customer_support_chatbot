@@ -10,6 +10,7 @@ import type {
   KnowledgeGap,
 } from "./api";
 import EmptyState from "./EmptyState";
+import Markdown from "./Markdown";
 import { useAdminAction } from "./useAdminAction";
 import { useAdminQuery } from "./useAdminQuery";
 
@@ -389,7 +390,7 @@ export default function Insights({
           <div className="admin-report-body">
             <div className="admin-card">
               <h3>Summary</h3>
-              <p className="admin-content">{report.summary}</p>
+              <Markdown text={report.summary} className="admin-md" />
             </div>
             {report.clusters.length === 0 ? (
               <EmptyState
